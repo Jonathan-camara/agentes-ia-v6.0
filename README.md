@@ -106,33 +106,48 @@ agentes-ia-v6.0/
 
 ## 🚀 Instalación y Uso
 
-### Requisitos:
-- Python 3.11+
-- Node.js 20+
-- Git
+### 📥 **Descarga e Instalación**
 
-### Backend:
+**📋 [GUÍA COMPLETA DE INSTALACIÓN](INSTALACION.md)** - Para Windows, Linux y macOS
+
+#### **Instalación Rápida:**
+
+**🪟 Windows:**
+```cmd
+git clone https://github.com/Jonathan-camara/agentes-ia-v6.0.git
+cd agentes-ia-v6.0
+install.bat
+```
+
+**🐧 Linux:**
+```bash
+git clone https://github.com/Jonathan-camara/agentes-ia-v6.0.git
+cd agentes-ia-v6.0
+chmod +x install.sh && ./install.sh
+```
+
+**🍎 macOS:**
+```bash
+git clone https://github.com/Jonathan-camara/agentes-ia-v6.0.git
+cd agentes-ia-v6.0
+chmod +x install.sh && ./install.sh
+```
+
+#### **Iniciar el Sistema:**
 ```bash
 cd agentes-backend
-python -m venv venv
 source venv/bin/activate  # Linux/Mac
 # venv\Scripts\activate   # Windows
-pip install -r requirements.txt
 python src/main.py
 ```
 
-### Frontend:
-```bash
-cd agentes-ia-interface
-npm install
-npm run dev        # Desarrollo
-npm run build      # Producción
-```
-
-### Acceso:
-- **Frontend**: http://localhost:3000 (desarrollo)
-- **Backend**: http://localhost:5000
-- **API Docs**: http://localhost:5000/api/health
+#### **Acceso:**
+- **URL**: http://localhost:5000
+- **Panel Principal**: Estadísticas y acciones rápidas
+- **Agentes**: Crear y gestionar agentes IA
+- **Salas 3D**: Chat interactivo con agentes
+- **Modelos IA**: Detectar y gestionar modelos
+- **Configuración**: APIs y bases de datos
 
 ## 🔧 Configuración de APIs
 
