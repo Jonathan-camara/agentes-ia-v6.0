@@ -158,6 +158,77 @@ export ANTHROPIC_API_KEY="tu-api-key"
 export GOOGLE_API_KEY="tu-api-key"
 ```
 
+## 🆘 Solución de Problemas Comunes
+
+### **🪟 Problemas en Windows PowerShell:**
+
+#### **Error: 'install.bat' no se reconoce**
+```powershell
+# Usar .\ antes del comando
+.\install.bat
+```
+
+#### **Error: unable to open database file**
+```powershell
+# Crear directorio de base de datos
+mkdir src\database
+
+# Copiar archivos del frontend
+cd ..\agentes-ia-interface
+xcopy /E /I /Y dist\* ..\agentes-backend\src\static\
+
+# Volver al backend e iniciar
+cd ..\agentes-backend
+python src\main.py
+```
+
+#### **Error: Número de parámetros no válido (xcopy)**
+```powershell
+# Comando correcto para copiar archivos
+xcopy /E /I /Y dist\* ..\agentes-backend\src\static\
+```
+
+#### **Error: venv\Scripts\activate no funciona**
+```powershell
+# Usar la ruta completa
+.\venv\Scripts\Activate.ps1
+
+# O simplemente ejecutar sin activar
+python src\main.py
+```
+
+### **🐧 Problemas en Linux/Mac:**
+
+#### **Error: Permission denied**
+```bash
+chmod +x install.sh
+sudo chown -R $USER:$USER agentes-ia-v6.0/
+```
+
+#### **Error: Python/Node.js no encontrado**
+```bash
+# Ubuntu/Debian
+sudo apt update && sudo apt install python3 python3-pip nodejs npm -y
+
+# macOS
+brew install python@3.11 node
+```
+
+### **🌐 Problemas Generales:**
+
+#### **Puerto 5000 ocupado**
+```python
+# Editar src/main.py, cambiar la última línea:
+app.run(host='0.0.0.0', port=5001, debug=True)
+```
+
+#### **Verificar que todo funciona:**
+1. ✅ Abrir http://localhost:5000
+2. ✅ Ver el panel principal cargado
+3. ✅ Crear un agente de prueba
+4. ✅ Verificar que se guarda en la base de datos
+5. ✅ Probar chat en salas 3D
+
 ### Servicios Locales:
 - **Ollama**: Instalar desde https://ollama.ai
 - **LM Studio**: Instalar desde https://lmstudio.ai
