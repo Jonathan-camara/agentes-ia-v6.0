@@ -80,110 +80,75 @@ const DialogTitle = ({ children, className, style }) => (
   </h2>
 )
 
-// Clase para conexiones REALES
+// Clase para conexiones REALES usando el backend
 class ConexionesReales {
   static async verificarOllama() {
     try {
-      const response = await fetch('http://localhost:11434/api/tags')
+      const response = await fetch('/api/modelos/detectar')
       if (response.ok) {
         const data = await response.json()
-        return {
-          conectado: true,
-          modelos: data.models || []
-        }
+        const ollama = data.ollama || { conectado: false, modelos: [] }
+        console.log('✅ Ollama detectado:', ollama)
+        return ollama
       }
     } catch (error) {
-      console.log('Ollama no disponible:', error.message)
+      console.log('❌ Error verificando Ollama:', error.message)
     }
     return { conectado: false, modelos: [] }
   }
 
   static async verificarLMStudio() {
     try {
-      const response = await fetch('http://localhost:1234/v1/models')
+      const response = await fetch('/api/modelos/detectar')
       if (response.ok) {
         const data = await response.json()
-        return {
-          conectado: true,
-          modelos: data.data || []
-        }
+        const lmstudio = data.lmstudio || { conectado: false, modelos: [] }
+        console.log('✅ LM Studio detectado:', lmstudio)
+        return lmstudio
       }
     } catch (error) {
-      console.log('LM Studio no disponible:', error.message)
+      console.log('❌ Error verificando LM Studio:', error.message)
     }
     return { conectado: false, modelos: [] }
   }
 
   static async verificarLocalAI() {
     try {
-      const response = await fetch('http://localhost:8080/v1/models')
+      const response = await fetch('/api/modelos/detectar')
       if (response.ok) {
         const data = await response.json()
-        return {
-          conectado: true,
-          modelos: data.data || []
-        }
+        const localai = data.localai || { conectado: false, modelos: [] }
+        console.log('✅ LocalAI detectado:', localai)
+        return localai
       }
     } catch (error) {
-      console.log('LocalAI no disponible:', error.message)
+      console.log('❌ Error verificando LocalAI:', error.message)
     }
     return { conectado: false, modelos: [] }
   }
 
   static async generarRespuesta(mensaje, agente) {
     try {
-      // Intentar con modelo local primero
-      if (agente.modelo.startsWith('ollama:')) {
-        const modeloLocal = agente.modelo.replace('ollama:', '')
-        const response = await fetch('http://localhost:11434/api/generate', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            model: modeloLocal,
-            prompt: `${agente.prompt}\n\nUsuario: ${mensaje}\nAsistente:`,
-            stream: false,
-            options: {
-              temperature: agente.temperatura || 0.7,
-              num_predict: agente.maxTokens || 1000
-            }
-          })
+      // Usar el backend para generar respuestas
+      const response = await fetch('/api/modelos/generar', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          modelo: agente.modelo,
+          mensaje: mensaje,
+          prompt_sistema: agente.prompt || 'Eres un asistente útil.',
+          temperatura: agente.temperatura || 0.7,
+          max_tokens: agente.maxTokens || 1000
         })
-        
-        if (response.ok) {
-          const data = await response.json()
-          return data.response
-        }
+      })
+
+      if (response.ok) {
+        const data = await response.json()
+        return data.respuesta || 'Sin respuesta'
+      } else {
+        const error = await response.json()
+        throw new Error(error.error || 'Error del servidor')
       }
-
-      // Fallback a OpenAI API
-      if (agente.modelo.startsWith('gpt-')) {
-        const apiKey = localStorage.getItem('openai_api_key')
-        if (!apiKey) throw new Error('API Key de OpenAI no configurada')
-
-        const response = await fetch('https://api.openai.com/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${apiKey}`
-          },
-          body: JSON.stringify({
-            model: agente.modelo,
-            messages: [
-              { role: 'system', content: agente.prompt },
-              { role: 'user', content: mensaje }
-            ],
-            temperature: agente.temperatura || 0.7,
-            max_tokens: agente.maxTokens || 1000
-          })
-        })
-
-        if (response.ok) {
-          const data = await response.json()
-          return data.choices[0].message.content
-        }
-      }
-
-      throw new Error('No se pudo generar respuesta')
     } catch (error) {
       console.error('Error generando respuesta:', error)
       return `Error: ${error.message}`
@@ -237,13 +202,21 @@ class ConexionesReales {
 
   static async descargarModelo(nombre) {
     try {
-      const response = await fetch('http://localhost:11434/api/pull', {
+      const response = await fetch('/api/modelos/ollama/descargar', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: nombre })
+        body: JSON.stringify({ modelo: nombre })
       })
       
-      return response.ok
+      if (response.ok) {
+        const data = await response.json()
+        console.log('✅ Modelo descargado:', data.mensaje)
+        return true
+      } else {
+        const error = await response.json()
+        console.error('❌ Error descargando:', error.error)
+        return false
+      }
     } catch (error) {
       console.error('Error descargando modelo:', error)
       return false
