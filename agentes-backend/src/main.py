@@ -12,6 +12,8 @@ from src.routes.user import user_bp
 from src.routes.agentes import agentes_bp
 from src.routes.salas import salas_bp
 from src.routes.modelos import modelos_bp
+from src.routes.archivos import archivos_bp
+from src.routes.web import web_bp
 
 app = Flask(__name__, static_folder=os.path.join(os.path.dirname(__file__), 'static'))
 app.config['SECRET_KEY'] = 'asdf#FGSgvasgf$5$WGT'
@@ -24,6 +26,8 @@ app.register_blueprint(user_bp, url_prefix='/api')
 app.register_blueprint(agentes_bp, url_prefix='/api')
 app.register_blueprint(salas_bp, url_prefix='/api')
 app.register_blueprint(modelos_bp, url_prefix='/api')
+app.register_blueprint(archivos_bp, url_prefix='/api')
+app.register_blueprint(web_bp, url_prefix='/api')
 
 # Configuración de base de datos
 app.config['SQLALCHEMY_DATABASE_URI'] = f"sqlite:///{os.path.join(os.path.dirname(__file__), 'database', 'app.db')}"

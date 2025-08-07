@@ -226,7 +226,12 @@ class ConexionesReales {
 
 // Componente principal
 function App() {
-  // Estados principales
+  // Estados para nuevas funcionalidades
+  const [archivosSubidos, setArchivosSubidos] = useState([])
+  const [armarioDocumentos, setArmarioDocumentos] = useState([])
+  const [busquedaWeb, setBusquedaWeb] = useState('')
+  const [resultadosBusqueda, setResultadosBusqueda] = useState([])
+  const [archivoSeleccionado, setArchivoSeleccionado] = useState(null)
   const [pestanaActiva, setPestanaActiva] = useState('panel')
   const [agentes, setAgentes] = useState([
     {
@@ -847,6 +852,106 @@ function App() {
     ))
 
     alert(`💾 Conocimiento guardado en la sala`)
+  }
+
+  // Funciones para archivos y búsqueda web
+  const subirArchivo = async (archivo, destino = 'general', agenteId = null) => {
+    try {
+      const formData = new FormData()
+      formData.append('archivo', archivo)
+      formData.append('destino', destino)
+      if (agenteId) formData.append('agente_id', agenteId)
+
+      const response = await fetch('/api/archivos/subir', {
+        method: 'POST',
+        body: formData
+      })
+
+      if (response.ok) {
+        const data = await response.json()
+        if (destino === 'armario') {
+          cargarArmarioDocumentos()
+        } else {
+          cargarArchivosSubidos()
+        }
+        alert(`📁 Archivo "${archivo.name}" subido exitosamente`)
+        return data
+      }
+    } catch (error) {
+      console.error('Error subiendo archivo:', error)
+      alert('❌ Error subiendo archivo')
+    }
+  }
+
+  const cargarArchivosSubidos = async () => {
+    try {
+      const response = await fetch('/api/archivos/listar?destino=general')
+      if (response.ok) {
+        const data = await response.json()
+        setArchivosSubidos(data.archivos)
+      }
+    } catch (error) {
+      console.error('Error cargando archivos:', error)
+    }
+  }
+
+  const cargarArmarioDocumentos = async () => {
+    try {
+      const response = await fetch('/api/archivos/armario')
+      if (response.ok) {
+        const data = await response.json()
+        setArmarioDocumentos(data.archivos)
+      }
+    } catch (error) {
+      console.error('Error cargando armario:', error)
+    }
+  }
+
+  const buscarEnWeb = async (consulta) => {
+    try {
+      setBusquedaWeb(consulta)
+      const response = await fetch('/api/web/buscar', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ consulta, num_resultados: 5 })
+      })
+
+      if (response.ok) {
+        const data = await response.json()
+        setResultadosBusqueda(data.resultados)
+        alert(`🔍 Encontrados ${data.resultados.length} resultados para "${consulta}"`)
+        return data.resultados
+      }
+    } catch (error) {
+      console.error('Error en búsqueda web:', error)
+      alert('❌ Error en búsqueda web')
+    }
+  }
+
+  const eliminarArchivo = async (archivoId) => {
+    try {
+      const response = await fetch(`/api/archivos/eliminar/${archivoId}`, {
+        method: 'DELETE'
+      })
+
+      if (response.ok) {
+        cargarArchivosSubidos()
+        cargarArmarioDocumentos()
+        alert('🗑️ Archivo eliminado exitosamente')
+      }
+    } catch (error) {
+      console.error('Error eliminando archivo:', error)
+      alert('❌ Error eliminando archivo')
+    }
+  }
+
+  const habilitarBusquedaWeb = (agenteId, habilitado) => {
+    setAgentes(prev => prev.map(a => 
+      a.id === agenteId ? { ...a, busquedaWeb: habilitado } : a
+    ))
+
+    const agente = agentes.find(a => a.id === agenteId)
+    alert(`🌐 Búsqueda web ${habilitado ? 'habilitada' : 'deshabilitada'} para ${agente?.nombre}`)
   }
 
   const analizarPatronesSala = (salaId) => {
