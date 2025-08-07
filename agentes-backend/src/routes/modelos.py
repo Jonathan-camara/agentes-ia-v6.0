@@ -26,32 +26,60 @@ def detectar_modelos():
 def detectar_ollama():
     """Detectar modelos de Ollama"""
     try:
-        response = requests.get('http://localhost:11434/api/tags', timeout=5)
+        # Intentar conectar a Ollama
+        response = requests.get('http://localhost:11434/api/tags', timeout=10)
         if response.status_code == 200:
             data = response.json()
             modelos = []
+            
+            # Procesar todos los modelos encontrados
             for modelo in data.get('models', []):
+                nombre_modelo = modelo['name']
+                tamano_bytes = modelo.get('size', 0)
+                
+                # Convertir tamaño a formato legible
+                if tamano_bytes > 1024**3:  # GB
+                    tamano_str = f"{tamano_bytes / (1024**3):.1f} GB"
+                elif tamano_bytes > 1024**2:  # MB
+                    tamano_str = f"{tamano_bytes / (1024**2):.1f} MB"
+                else:
+                    tamano_str = f"{tamano_bytes} bytes"
+                
                 modelos.append({
-                    'id': f"ollama:{modelo['name']}",
-                    'nombre': modelo['name'],
+                    'id': f"ollama:{nombre_modelo}",
+                    'nombre': nombre_modelo,
                     'servicio': 'Ollama',
-                    'tamano': modelo.get('size', 0),
+                    'tamano': tamano_str,
+                    'tamano_bytes': tamano_bytes,
                     'modificado': modelo.get('modified_at'),
                     'activo': True,
-                    'local': True
+                    'local': True,
+                    'disponible': True,
+                    'familia': modelo.get('details', {}).get('family', 'unknown'),
+                    'formato': modelo.get('details', {}).get('format', 'unknown')
                 })
+            
+            print(f"✅ Ollama detectado: {len(modelos)} modelos encontrados")
             return {
                 'conectado': True,
                 'modelos': modelos,
-                'puerto': 11434
+                'puerto': 11434,
+                'total_modelos': len(modelos),
+                'estado': 'Conectado y funcionando'
             }
+    except requests.exceptions.ConnectionError:
+        print("❌ Ollama no está ejecutándose en puerto 11434")
+    except requests.exceptions.Timeout:
+        print("⏱️ Timeout conectando a Ollama")
     except Exception as e:
-        print(f"Error detectando Ollama: {e}")
+        print(f"❌ Error detectando Ollama: {e}")
     
     return {
         'conectado': False,
         'modelos': [],
-        'puerto': 11434
+        'puerto': 11434,
+        'total_modelos': 0,
+        'estado': 'No disponible - Verificar que Ollama esté ejecutándose'
     }
 
 def detectar_lmstudio():
@@ -273,7 +301,242 @@ def eliminar_modelo_ollama():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-@modelos_bp.route('/modelos/probar', methods=['POST'])
+@modelos_bp.route('/modelos/generar', methods=['POST'])
+def generar_respuesta_modelo():
+    """Generar respuesta usando un modelo específico"""
+    try:
+        data = request.get_json()
+        modelo_id = data.get('modelo')
+        mensaje = data.get('mensaje')
+        prompt_sistema = data.get('prompt_sistema', 'Eres un asistente útil.')
+        temperatura = data.get('temperatura', 0.7)
+        max_tokens = data.get('max_tokens', 1000)
+        
+        if not modelo_id or not mensaje:
+            return jsonify({'error': 'Modelo y mensaje son requeridos'}), 400
+        
+        respuesta = None
+        
+        # Determinar el servicio del modelo
+        if modelo_id.startswith('ollama:'):
+            nombre_modelo = modelo_id.replace('ollama:', '')
+            respuesta = generar_respuesta_ollama(nombre_modelo, mensaje, prompt_sistema, temperatura, max_tokens)
+        
+        elif modelo_id.startswith('lmstudio:'):
+            nombre_modelo = modelo_id.replace('lmstudio:', '')
+            respuesta = generar_respuesta_lmstudio(nombre_modelo, mensaje, prompt_sistema, temperatura, max_tokens)
+        
+        elif modelo_id.startswith('gpt-'):
+            respuesta = generar_respuesta_openai(modelo_id, mensaje, prompt_sistema, temperatura, max_tokens)
+        
+        elif modelo_id.startswith('claude-'):
+            respuesta = generar_respuesta_anthropic(modelo_id, mensaje, prompt_sistema, temperatura, max_tokens)
+        
+        elif modelo_id.startswith('gemini-'):
+            respuesta = generar_respuesta_google(modelo_id, mensaje, prompt_sistema, temperatura, max_tokens)
+        
+        else:
+            return jsonify({'error': f'Modelo no soportado: {modelo_id}'}), 400
+        
+        if respuesta:
+            return jsonify({
+                'modelo': modelo_id,
+                'mensaje': mensaje,
+                'respuesta': respuesta,
+                'timestamp': datetime.utcnow().isoformat(),
+                'exito': True
+            })
+        else:
+            return jsonify({'error': 'No se pudo generar respuesta'}), 500
+    
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+def generar_respuesta_ollama(modelo, mensaje, prompt_sistema, temperatura, max_tokens):
+    """Generar respuesta usando Ollama"""
+    try:
+        payload = {
+            'model': modelo,
+            'prompt': f"{prompt_sistema}\n\nUsuario: {mensaje}\nAsistente:",
+            'stream': False,
+            'options': {
+                'temperature': temperatura,
+                'num_predict': max_tokens
+            }
+        }
+        
+        response = requests.post('http://localhost:11434/api/generate', 
+                               json=payload, timeout=60)
+        
+        if response.status_code == 200:
+            data = response.json()
+            return data.get('response', '').strip()
+    except Exception as e:
+        print(f"Error generando respuesta con Ollama: {e}")
+    
+    return None
+
+def generar_respuesta_lmstudio(modelo, mensaje, prompt_sistema, temperatura, max_tokens):
+    """Generar respuesta usando LM Studio"""
+    try:
+        payload = {
+            'model': modelo,
+            'messages': [
+                {'role': 'system', 'content': prompt_sistema},
+                {'role': 'user', 'content': mensaje}
+            ],
+            'temperature': temperatura,
+            'max_tokens': max_tokens
+        }
+        
+        response = requests.post('http://localhost:1234/v1/chat/completions',
+                               json=payload, timeout=60)
+        
+        if response.status_code == 200:
+            data = response.json()
+            return data['choices'][0]['message']['content'].strip()
+    except Exception as e:
+        print(f"Error generando respuesta con LM Studio: {e}")
+    
+    return None
+
+def generar_respuesta_openai(modelo, mensaje, prompt_sistema, temperatura, max_tokens):
+    """Generar respuesta usando OpenAI"""
+    try:
+        api_key = os.getenv('OPENAI_API_KEY')
+        if not api_key:
+            return None
+        
+        payload = {
+            'model': modelo,
+            'messages': [
+                {'role': 'system', 'content': prompt_sistema},
+                {'role': 'user', 'content': mensaje}
+            ],
+            'temperature': temperatura,
+            'max_tokens': max_tokens
+        }
+        
+        headers = {
+            'Authorization': f'Bearer {api_key}',
+            'Content-Type': 'application/json'
+        }
+        
+        response = requests.post('https://api.openai.com/v1/chat/completions',
+                               json=payload, headers=headers, timeout=60)
+        
+        if response.status_code == 200:
+            data = response.json()
+            return data['choices'][0]['message']['content'].strip()
+    except Exception as e:
+        print(f"Error generando respuesta con OpenAI: {e}")
+    
+    return None
+
+def generar_respuesta_anthropic(modelo, mensaje, prompt_sistema, temperatura, max_tokens):
+    """Generar respuesta usando Anthropic"""
+    try:
+        api_key = os.getenv('ANTHROPIC_API_KEY')
+        if not api_key:
+            return None
+        
+        payload = {
+            'model': modelo,
+            'max_tokens': max_tokens,
+            'temperature': temperatura,
+            'system': prompt_sistema,
+            'messages': [
+                {'role': 'user', 'content': mensaje}
+            ]
+        }
+        
+        headers = {
+            'x-api-key': api_key,
+            'Content-Type': 'application/json',
+            'anthropic-version': '2023-06-01'
+        }
+        
+        response = requests.post('https://api.anthropic.com/v1/messages',
+                               json=payload, headers=headers, timeout=60)
+        
+        if response.status_code == 200:
+            data = response.json()
+            return data['content'][0]['text'].strip()
+    except Exception as e:
+        print(f"Error generando respuesta con Anthropic: {e}")
+    
+    return None
+
+def generar_respuesta_google(modelo, mensaje, prompt_sistema, temperatura, max_tokens):
+    """Generar respuesta usando Google AI"""
+    try:
+        api_key = os.getenv('GOOGLE_API_KEY')
+        if not api_key:
+            return None
+        
+        # Implementación simplificada para Google AI
+        # En producción usarías la librería oficial de Google
+        prompt_completo = f"{prompt_sistema}\n\nUsuario: {mensaje}\nAsistente:"
+        
+        # Aquí iría la implementación real de Google AI
+        # Por ahora retornamos un placeholder
+        return f"[Respuesta de {modelo}] Esta funcionalidad requiere implementación específica de Google AI SDK."
+    except Exception as e:
+        print(f"Error generando respuesta con Google AI: {e}")
+    
+    return None
+
+@modelos_bp.route('/modelos/buscar-web', methods=['POST'])
+def buscar_en_web():
+    """Buscar información en internet"""
+    try:
+        data = request.get_json()
+        consulta = data.get('consulta')
+        
+        if not consulta:
+            return jsonify({'error': 'Consulta requerida'}), 400
+        
+        # Implementar búsqueda web real
+        import urllib.parse
+        import re
+        
+        # Usar DuckDuckGo como motor de búsqueda (no requiere API key)
+        query_encoded = urllib.parse.quote(consulta)
+        search_url = f"https://duckduckgo.com/html/?q={query_encoded}"
+        
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        }
+        
+        response = requests.get(search_url, headers=headers, timeout=10)
+        
+        if response.status_code == 200:
+            # Extraer resultados básicos (implementación simplificada)
+            content = response.text
+            
+            # Buscar títulos y enlaces
+            title_pattern = r'<a[^>]*class="result__a"[^>]*href="([^"]*)"[^>]*>([^<]*)</a>'
+            matches = re.findall(title_pattern, content)
+            
+            resultados = []
+            for i, (url, title) in enumerate(matches[:5]):  # Primeros 5 resultados
+                resultados.append({
+                    'titulo': title.strip(),
+                    'url': url,
+                    'posicion': i + 1
+                })
+            
+            return jsonify({
+                'consulta': consulta,
+                'resultados': resultados,
+                'total': len(resultados),
+                'timestamp': datetime.utcnow().isoformat()
+            })
+        
+        return jsonify({'error': 'No se pudo realizar la búsqueda'}), 500
+    
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 def probar_modelo():
     """Probar un modelo con un mensaje simple"""
     try:
