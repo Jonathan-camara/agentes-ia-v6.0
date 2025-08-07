@@ -24,63 +24,199 @@ def detectar_modelos():
         return jsonify({'error': str(e)}), 500
 
 def detectar_ollama():
-    """Detectar modelos de Ollama"""
+    """Detectar modelos de Ollama con diagnóstico mejorado"""
     try:
-        # Intentar conectar a Ollama
-        response = requests.get('http://localhost:11434/api/tags', timeout=10)
-        if response.status_code == 200:
-            data = response.json()
-            modelos = []
-            
-            # Procesar todos los modelos encontrados
-            for modelo in data.get('models', []):
-                nombre_modelo = modelo['name']
-                tamano_bytes = modelo.get('size', 0)
+        print("🔍 Iniciando detección de Ollama...")
+        
+        # Intentar conectar a Ollama con múltiples intentos
+        for intento in range(3):
+            try:
+                print(f"📡 Intento {intento + 1}/3 conectando a Ollama...")
+                response = requests.get('http://localhost:11434/api/tags', timeout=15)
                 
-                # Convertir tamaño a formato legible
-                if tamano_bytes > 1024**3:  # GB
-                    tamano_str = f"{tamano_bytes / (1024**3):.1f} GB"
-                elif tamano_bytes > 1024**2:  # MB
-                    tamano_str = f"{tamano_bytes / (1024**2):.1f} MB"
+                if response.status_code == 200:
+                    print("✅ Conexión exitosa con Ollama")
+                    data = response.json()
+                    print(f"📊 Respuesta recibida: {json.dumps(data, indent=2)}")
+                    
+                    modelos = []
+                    modelos_raw = data.get('models', [])
+                    
+                    print(f"🤖 Procesando {len(modelos_raw)} modelos...")
+                    
+                    # Procesar todos los modelos encontrados
+                    for i, modelo in enumerate(modelos_raw):
+                        try:
+                            nombre_modelo = modelo.get('name', f'modelo_{i}')
+                            tamano_bytes = modelo.get('size', 0)
+                            
+                            # Convertir tamaño a formato legible
+                            if tamano_bytes > 1024**3:  # GB
+                                tamano_str = f"{tamano_bytes / (1024**3):.1f} GB"
+                            elif tamano_bytes > 1024**2:  # MB
+                                tamano_str = f"{tamano_bytes / (1024**2):.1f} MB"
+                            else:
+                                tamano_str = f"{tamano_bytes} bytes"
+                            
+                            # Extraer información adicional
+                            detalles = modelo.get('details', {})
+                            familia = detalles.get('family', 'unknown')
+                            formato = detalles.get('format', 'unknown')
+                            
+                            modelo_info = {
+                                'id': f"ollama:{nombre_modelo}",
+                                'nombre': nombre_modelo,
+                                'servicio': 'Ollama',
+                                'tamano': tamano_str,
+                                'tamano_bytes': tamano_bytes,
+                                'modificado': modelo.get('modified_at'),
+                                'activo': True,
+                                'local': True,
+                                'disponible': True,
+                                'familia': familia,
+                                'formato': formato,
+                                'digest': modelo.get('digest', ''),
+                                'detalles_completos': modelo
+                            }
+                            
+                            modelos.append(modelo_info)
+                            print(f"✅ Modelo procesado: {nombre_modelo} ({tamano_str})")
+                            
+                        except Exception as e:
+                            print(f"⚠️ Error procesando modelo {i}: {e}")
+                            continue
+                    
+                    print(f"🎯 Total de modelos detectados: {len(modelos)}")
+                    
+                    return {
+                        'conectado': True,
+                        'modelos': modelos,
+                        'puerto': 11434,
+                        'total_modelos': len(modelos),
+                        'estado': 'Conectado y funcionando',
+                        'version_api': data.get('version', 'unknown'),
+                        'respuesta_completa': data
+                    }
+                
                 else:
-                    tamano_str = f"{tamano_bytes} bytes"
-                
-                modelos.append({
-                    'id': f"ollama:{nombre_modelo}",
-                    'nombre': nombre_modelo,
-                    'servicio': 'Ollama',
-                    'tamano': tamano_str,
-                    'tamano_bytes': tamano_bytes,
-                    'modificado': modelo.get('modified_at'),
-                    'activo': True,
-                    'local': True,
-                    'disponible': True,
-                    'familia': modelo.get('details', {}).get('family', 'unknown'),
-                    'formato': modelo.get('details', {}).get('format', 'unknown')
-                })
-            
-            print(f"✅ Ollama detectado: {len(modelos)} modelos encontrados")
-            return {
-                'conectado': True,
-                'modelos': modelos,
-                'puerto': 11434,
-                'total_modelos': len(modelos),
-                'estado': 'Conectado y funcionando'
-            }
-    except requests.exceptions.ConnectionError:
-        print("❌ Ollama no está ejecutándose en puerto 11434")
-    except requests.exceptions.Timeout:
-        print("⏱️ Timeout conectando a Ollama")
+                    print(f"❌ Error HTTP {response.status_code}: {response.text}")
+                    
+            except requests.exceptions.ConnectionError as e:
+                print(f"❌ Error de conexión (intento {intento + 1}): {e}")
+                if intento < 2:  # Si no es el último intento
+                    import time
+                    time.sleep(2)  # Esperar 2 segundos antes del siguiente intento
+                    
+            except requests.exceptions.Timeout as e:
+                print(f"⏱️ Timeout (intento {intento + 1}): {e}")
+                if intento < 2:
+                    import time
+                    time.sleep(2)
+                    
+            except Exception as e:
+                print(f"❌ Error inesperado (intento {intento + 1}): {e}")
+                if intento < 2:
+                    import time
+                    time.sleep(2)
+        
+        # Si llegamos aquí, todos los intentos fallaron
+        print("❌ Todos los intentos de conexión fallaron")
+        
+        # Verificar si el proceso está ejecutándose
+        proceso_activo = verificar_proceso_ollama_detallado()
+        
+        return {
+            'conectado': False,
+            'modelos': [],
+            'puerto': 11434,
+            'total_modelos': 0,
+            'estado': 'No disponible - Verificar que Ollama esté ejecutándose',
+            'proceso_activo': proceso_activo,
+            'diagnostico': 'Ollama no responde en puerto 11434'
+        }
+        
     except Exception as e:
-        print(f"❌ Error detectando Ollama: {e}")
-    
-    return {
-        'conectado': False,
-        'modelos': [],
-        'puerto': 11434,
-        'total_modelos': 0,
-        'estado': 'No disponible - Verificar que Ollama esté ejecutándose'
-    }
+        print(f"❌ Error crítico en detección de Ollama: {e}")
+        return {
+            'conectado': False,
+            'modelos': [],
+            'puerto': 11434,
+            'total_modelos': 0,
+            'estado': f'Error crítico: {str(e)}',
+            'error_detallado': str(e)
+        }
+
+def verificar_proceso_ollama_detallado():
+    """Verificar proceso Ollama con más detalle"""
+    try:
+        import subprocess
+        import platform
+        
+        sistema = platform.system().lower()
+        print(f"🔍 Verificando proceso Ollama en {sistema}...")
+        
+        if sistema == 'windows':
+            # Verificar proceso ollama.exe
+            result = subprocess.run(['tasklist', '/FI', 'IMAGENAME eq ollama.exe'], 
+                                  capture_output=True, text=True)
+            
+            if 'ollama.exe' in result.stdout:
+                print("✅ Proceso ollama.exe encontrado")
+                return {
+                    'ejecutandose': True,
+                    'metodo': 'tasklist',
+                    'detalles': result.stdout
+                }
+            else:
+                print("❌ Proceso ollama.exe NO encontrado")
+                
+                # Buscar en rutas comunes
+                posibles_rutas = [
+                    r'C:\Users\{}\AppData\Local\Programs\Ollama\ollama.exe'.format(os.getenv('USERNAME', '')),
+                    r'C:\Program Files\Ollama\ollama.exe',
+                    r'C:\Program Files (x86)\Ollama\ollama.exe'
+                ]
+                
+                for ruta in posibles_rutas:
+                    if os.path.exists(ruta):
+                        print(f"💡 Ollama encontrado en: {ruta}")
+                        return {
+                            'ejecutandose': False,
+                            'instalado': True,
+                            'ruta': ruta,
+                            'sugerencia': f'Ejecutar: {ruta} serve'
+                        }
+                
+                return {
+                    'ejecutandose': False,
+                    'instalado': False,
+                    'sugerencia': 'Instalar Ollama desde https://ollama.ai'
+                }
+        else:
+            # Linux/Mac
+            result = subprocess.run(['pgrep', '-f', 'ollama'], 
+                                  capture_output=True, text=True)
+            
+            if result.returncode == 0:
+                print("✅ Proceso ollama encontrado")
+                return {
+                    'ejecutandose': True,
+                    'metodo': 'pgrep',
+                    'pid': result.stdout.strip()
+                }
+            else:
+                print("❌ Proceso ollama NO encontrado")
+                return {
+                    'ejecutandose': False,
+                    'sugerencia': 'Ejecutar: ollama serve'
+                }
+                
+    except Exception as e:
+        print(f"❌ Error verificando proceso: {e}")
+        return {
+            'ejecutandose': False,
+            'error': str(e)
+        }
 
 def detectar_lmstudio():
     """Detectar modelos de LM Studio"""
@@ -485,6 +621,534 @@ def generar_respuesta_google(modelo, mensaje, prompt_sistema, temperatura, max_t
         print(f"Error generando respuesta con Google AI: {e}")
     
     return None
+
+@modelos_bp.route('/modelos/activar', methods=['POST'])
+def activar_modelo():
+    """Activar un modelo realmente en el sistema"""
+    try:
+        data = request.get_json()
+        modelo_id = data.get('modelo')
+        servicio = data.get('servicio', '').lower()
+        
+        if not modelo_id:
+            return jsonify({'error': 'ID de modelo requerido'}), 400
+        
+        resultado = None
+        
+        if servicio == 'ollama' or modelo_id.startswith('ollama:'):
+            nombre_modelo = modelo_id.replace('ollama:', '')
+            resultado = activar_modelo_ollama(nombre_modelo)
+        
+        elif servicio == 'lmstudio' or modelo_id.startswith('lmstudio:'):
+            resultado = activar_lmstudio()
+        
+        elif servicio == 'localai' or modelo_id.startswith('localai:'):
+            resultado = activar_localai()
+        
+        else:
+            return jsonify({'error': f'Servicio no soportado: {servicio}'}), 400
+        
+        if resultado['exito']:
+            return jsonify({
+                'mensaje': f'Modelo {modelo_id} activado exitosamente',
+                'modelo': modelo_id,
+                'servicio': servicio,
+                'estado': 'activo',
+                'detalles': resultado,
+                'timestamp': datetime.utcnow().isoformat()
+            })
+        else:
+            return jsonify({
+                'error': f'No se pudo activar el modelo: {resultado.get("error", "Error desconocido")}',
+                'detalles': resultado
+            }), 500
+    
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@modelos_bp.route('/modelos/desactivar', methods=['POST'])
+def desactivar_modelo():
+    """Desactivar un modelo realmente en el sistema"""
+    try:
+        data = request.get_json()
+        modelo_id = data.get('modelo')
+        servicio = data.get('servicio', '').lower()
+        
+        if not modelo_id:
+            return jsonify({'error': 'ID de modelo requerido'}), 400
+        
+        resultado = None
+        
+        if servicio == 'ollama' or modelo_id.startswith('ollama:'):
+            resultado = desactivar_modelo_ollama()
+        
+        elif servicio == 'lmstudio' or modelo_id.startswith('lmstudio:'):
+            resultado = desactivar_lmstudio()
+        
+        elif servicio == 'localai' or modelo_id.startswith('localai:'):
+            resultado = desactivar_localai()
+        
+        else:
+            return jsonify({'error': f'Servicio no soportado: {servicio}'}), 400
+        
+        if resultado['exito']:
+            return jsonify({
+                'mensaje': f'Modelo {modelo_id} desactivado exitosamente',
+                'modelo': modelo_id,
+                'servicio': servicio,
+                'estado': 'inactivo',
+                'detalles': resultado,
+                'timestamp': datetime.utcnow().isoformat()
+            })
+        else:
+            return jsonify({
+                'error': f'No se pudo desactivar el modelo: {resultado.get("error", "Error desconocido")}',
+                'detalles': resultado
+            }), 500
+    
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+def activar_modelo_ollama(nombre_modelo):
+    """Activar un modelo específico en Ollama"""
+    try:
+        import subprocess
+        import platform
+        
+        # Verificar si Ollama está ejecutándose
+        try:
+            response = requests.get('http://localhost:11434/api/tags', timeout=5)
+            if response.status_code != 200:
+                # Intentar iniciar Ollama
+                resultado_inicio = iniciar_ollama()
+                if not resultado_inicio['exito']:
+                    return resultado_inicio
+        except:
+            # Ollama no está ejecutándose, intentar iniciarlo
+            resultado_inicio = iniciar_ollama()
+            if not resultado_inicio['exito']:
+                return resultado_inicio
+        
+        # Verificar si el modelo existe
+        response = requests.get('http://localhost:11434/api/tags', timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            modelos_disponibles = [m['name'] for m in data.get('models', [])]
+            
+            if nombre_modelo not in modelos_disponibles:
+                # El modelo no existe, intentar descargarlo
+                print(f"📥 Descargando modelo {nombre_modelo}...")
+                resultado_descarga = descargar_modelo_ollama_interno(nombre_modelo)
+                if not resultado_descarga['exito']:
+                    return resultado_descarga
+        
+        # Cargar el modelo en memoria (hacer una consulta simple)
+        payload = {
+            'model': nombre_modelo,
+            'prompt': 'Hola',
+            'stream': False,
+            'options': {'num_predict': 1}
+        }
+        
+        response = requests.post('http://localhost:11434/api/generate', 
+                               json=payload, timeout=30)
+        
+        if response.status_code == 200:
+            return {
+                'exito': True,
+                'mensaje': f'Modelo {nombre_modelo} activado y cargado en memoria',
+                'modelo': nombre_modelo,
+                'estado': 'activo'
+            }
+        else:
+            return {
+                'exito': False,
+                'error': f'Error cargando modelo: {response.text}',
+                'codigo': response.status_code
+            }
+    
+    except Exception as e:
+        return {
+            'exito': False,
+            'error': str(e)
+        }
+
+def desactivar_modelo_ollama():
+    """Desactivar Ollama (liberar memoria)"""
+    try:
+        import subprocess
+        import platform
+        
+        sistema = platform.system().lower()
+        
+        if sistema == 'windows':
+            # En Windows, terminar proceso ollama
+            result = subprocess.run(['taskkill', '/F', '/IM', 'ollama.exe'], 
+                                  capture_output=True, text=True)
+            if result.returncode == 0:
+                return {
+                    'exito': True,
+                    'mensaje': 'Ollama desactivado exitosamente',
+                    'metodo': 'taskkill'
+                }
+        else:
+            # En Linux/Mac
+            result = subprocess.run(['pkill', '-f', 'ollama'], 
+                                  capture_output=True, text=True)
+            if result.returncode == 0:
+                return {
+                    'exito': True,
+                    'mensaje': 'Ollama desactivado exitosamente',
+                    'metodo': 'pkill'
+                }
+        
+        return {
+            'exito': False,
+            'error': 'No se pudo desactivar Ollama',
+            'detalles': result.stderr if 'result' in locals() else 'Comando no ejecutado'
+        }
+    
+    except Exception as e:
+        return {
+            'exito': False,
+            'error': str(e)
+        }
+
+def iniciar_ollama():
+    """Iniciar Ollama automáticamente"""
+    try:
+        import subprocess
+        import platform
+        import time
+        
+        sistema = platform.system().lower()
+        
+        if sistema == 'windows':
+            # En Windows, buscar ollama.exe
+            posibles_rutas = [
+                r'C:\Users\{}\AppData\Local\Programs\Ollama\ollama.exe'.format(os.getenv('USERNAME')),
+                r'C:\Program Files\Ollama\ollama.exe',
+                r'C:\Program Files (x86)\Ollama\ollama.exe'
+            ]
+            
+            ruta_ollama = None
+            for ruta in posibles_rutas:
+                if os.path.exists(ruta):
+                    ruta_ollama = ruta
+                    break
+            
+            if not ruta_ollama:
+                # Intentar con comando global
+                try:
+                    subprocess.run(['ollama', '--version'], capture_output=True, timeout=5)
+                    ruta_ollama = 'ollama'
+                except:
+                    return {
+                        'exito': False,
+                        'error': 'Ollama no encontrado en el sistema'
+                    }
+            
+            # Iniciar Ollama
+            subprocess.Popen([ruta_ollama, 'serve'], 
+                           creationflags=subprocess.CREATE_NEW_CONSOLE)
+        
+        else:
+            # En Linux/Mac
+            subprocess.Popen(['ollama', 'serve'])
+        
+        # Esperar a que inicie
+        for i in range(10):  # Esperar hasta 10 segundos
+            try:
+                response = requests.get('http://localhost:11434/api/tags', timeout=2)
+                if response.status_code == 200:
+                    return {
+                        'exito': True,
+                        'mensaje': 'Ollama iniciado exitosamente',
+                        'tiempo_inicio': f'{i+1} segundos'
+                    }
+            except:
+                time.sleep(1)
+        
+        return {
+            'exito': False,
+            'error': 'Ollama no respondió después de 10 segundos'
+        }
+    
+    except Exception as e:
+        return {
+            'exito': False,
+            'error': str(e)
+        }
+
+def descargar_modelo_ollama_interno(nombre_modelo):
+    """Descargar un modelo en Ollama internamente"""
+    try:
+        print(f"📥 Iniciando descarga de {nombre_modelo}...")
+        
+        response = requests.post('http://localhost:11434/api/pull',
+            json={'name': nombre_modelo},
+            timeout=600,  # 10 minutos timeout para descarga
+            stream=True
+        )
+        
+        if response.status_code == 200:
+            # Procesar respuesta streaming
+            for line in response.iter_lines():
+                if line:
+                    try:
+                        data = json.loads(line)
+                        if 'status' in data:
+                            print(f"📥 {data['status']}")
+                        if data.get('status') == 'success':
+                            return {
+                                'exito': True,
+                                'mensaje': f'Modelo {nombre_modelo} descargado exitosamente'
+                            }
+                    except:
+                        continue
+            
+            return {
+                'exito': True,
+                'mensaje': f'Descarga de {nombre_modelo} completada'
+            }
+        else:
+            return {
+                'exito': False,
+                'error': f'Error descargando: {response.text}'
+            }
+    
+    except Exception as e:
+        return {
+            'exito': False,
+            'error': str(e)
+        }
+
+def activar_lmstudio():
+    """Activar LM Studio"""
+    try:
+        import subprocess
+        import platform
+        
+        sistema = platform.system().lower()
+        
+        if sistema == 'windows':
+            # Buscar LM Studio en rutas comunes
+            posibles_rutas = [
+                r'C:\Users\{}\AppData\Local\Programs\LM Studio\LM Studio.exe'.format(os.getenv('USERNAME')),
+                r'C:\Program Files\LM Studio\LM Studio.exe'
+            ]
+            
+            for ruta in posibles_rutas:
+                if os.path.exists(ruta):
+                    subprocess.Popen([ruta])
+                    return {
+                        'exito': True,
+                        'mensaje': 'LM Studio iniciado',
+                        'ruta': ruta
+                    }
+        
+        return {
+            'exito': False,
+            'error': 'LM Studio no encontrado. Instálalo desde https://lmstudio.ai'
+        }
+    
+    except Exception as e:
+        return {
+            'exito': False,
+            'error': str(e)
+        }
+
+def desactivar_lmstudio():
+    """Desactivar LM Studio"""
+    try:
+        import subprocess
+        import platform
+        
+        sistema = platform.system().lower()
+        
+        if sistema == 'windows':
+            result = subprocess.run(['taskkill', '/F', '/IM', 'LM Studio.exe'], 
+                                  capture_output=True, text=True)
+        else:
+            result = subprocess.run(['pkill', '-f', 'lm.studio'], 
+                                  capture_output=True, text=True)
+        
+        return {
+            'exito': True,
+            'mensaje': 'LM Studio desactivado'
+        }
+    
+    except Exception as e:
+        return {
+            'exito': False,
+            'error': str(e)
+        }
+
+def activar_localai():
+    """Activar LocalAI"""
+    try:
+        import subprocess
+        
+        # Intentar iniciar LocalAI con Docker
+        result = subprocess.run([
+            'docker', 'run', '-d', '-p', '8080:8080', 
+            '--name', 'localai', 'localai/localai:latest'
+        ], capture_output=True, text=True)
+        
+        if result.returncode == 0:
+            return {
+                'exito': True,
+                'mensaje': 'LocalAI iniciado con Docker',
+                'contenedor': result.stdout.strip()
+            }
+        else:
+            return {
+                'exito': False,
+                'error': f'Error iniciando LocalAI: {result.stderr}'
+            }
+    
+    except Exception as e:
+        return {
+            'exito': False,
+            'error': str(e)
+        }
+
+def desactivar_localai():
+    """Desactivar LocalAI"""
+    try:
+        import subprocess
+        
+        # Detener contenedor Docker
+        result = subprocess.run(['docker', 'stop', 'localai'], 
+                              capture_output=True, text=True)
+        
+        if result.returncode == 0:
+            # Eliminar contenedor
+            subprocess.run(['docker', 'rm', 'localai'], 
+                         capture_output=True, text=True)
+            
+            return {
+                'exito': True,
+                'mensaje': 'LocalAI desactivado'
+            }
+        else:
+            return {
+                'exito': False,
+                'error': f'Error desactivando LocalAI: {result.stderr}'
+            }
+    
+    except Exception as e:
+        return {
+            'exito': False,
+            'error': str(e)
+        }
+
+@modelos_bp.route('/modelos/estado-servicios', methods=['GET'])
+def obtener_estado_servicios():
+    """Obtener estado real de todos los servicios"""
+    try:
+        import subprocess
+        import platform
+        
+        sistema = platform.system().lower()
+        estados = {}
+        
+        # Verificar Ollama
+        try:
+            response = requests.get('http://localhost:11434/api/tags', timeout=3)
+            estados['ollama'] = {
+                'activo': response.status_code == 200,
+                'puerto': 11434,
+                'proceso': verificar_proceso_ollama(sistema)
+            }
+        except:
+            estados['ollama'] = {
+                'activo': False,
+                'puerto': 11434,
+                'proceso': verificar_proceso_ollama(sistema)
+            }
+        
+        # Verificar LM Studio
+        try:
+            response = requests.get('http://localhost:1234/v1/models', timeout=3)
+            estados['lmstudio'] = {
+                'activo': response.status_code == 200,
+                'puerto': 1234,
+                'proceso': verificar_proceso_lmstudio(sistema)
+            }
+        except:
+            estados['lmstudio'] = {
+                'activo': False,
+                'puerto': 1234,
+                'proceso': verificar_proceso_lmstudio(sistema)
+            }
+        
+        # Verificar LocalAI
+        try:
+            response = requests.get('http://localhost:8080/v1/models', timeout=3)
+            estados['localai'] = {
+                'activo': response.status_code == 200,
+                'puerto': 8080,
+                'proceso': verificar_proceso_localai()
+            }
+        except:
+            estados['localai'] = {
+                'activo': False,
+                'puerto': 8080,
+                'proceso': verificar_proceso_localai()
+            }
+        
+        return jsonify({
+            'servicios': estados,
+            'timestamp': datetime.utcnow().isoformat(),
+            'sistema': sistema
+        })
+    
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+def verificar_proceso_ollama(sistema):
+    """Verificar si el proceso Ollama está ejecutándose"""
+    try:
+        import subprocess
+        
+        if sistema == 'windows':
+            result = subprocess.run(['tasklist', '/FI', 'IMAGENAME eq ollama.exe'], 
+                                  capture_output=True, text=True)
+            return 'ollama.exe' in result.stdout
+        else:
+            result = subprocess.run(['pgrep', '-f', 'ollama'], 
+                                  capture_output=True, text=True)
+            return result.returncode == 0
+    except:
+        return False
+
+def verificar_proceso_lmstudio(sistema):
+    """Verificar si LM Studio está ejecutándose"""
+    try:
+        import subprocess
+        
+        if sistema == 'windows':
+            result = subprocess.run(['tasklist', '/FI', 'IMAGENAME eq LM Studio.exe'], 
+                                  capture_output=True, text=True)
+            return 'LM Studio.exe' in result.stdout
+        else:
+            result = subprocess.run(['pgrep', '-f', 'lm.studio'], 
+                                  capture_output=True, text=True)
+            return result.returncode == 0
+    except:
+        return False
+
+def verificar_proceso_localai():
+    """Verificar si LocalAI está ejecutándose"""
+    try:
+        import subprocess
+        
+        result = subprocess.run(['docker', 'ps', '--filter', 'name=localai'], 
+                              capture_output=True, text=True)
+        return 'localai' in result.stdout
+    except:
+        return False
 
 @modelos_bp.route('/modelos/buscar-web', methods=['POST'])
 def buscar_en_web():
