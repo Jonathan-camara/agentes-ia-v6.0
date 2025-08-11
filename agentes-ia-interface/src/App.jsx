@@ -5,7 +5,9 @@ import {
   Plus, Settings, Video, Download, Save, Database, User, 
   Edit, Upload, File, Trash2, Play, Pause, RotateCcw, 
   Server, Bot, Monitor, Send, Mic, MicOff, Volume2, VolumeX,
-  Eye, EyeOff, Shield, Key, Globe, Wifi, WifiOff
+  Eye, EyeOff, Shield, Key, Globe, Wifi, WifiOff, Search,
+  FileText, Image, Archive, Folder, FolderOpen, Cloud,
+  Brain, BookOpen, Zap, CheckCircle, AlertCircle
 } from 'lucide-react'
 
 // Componentes UI básicos
@@ -138,7 +140,10 @@ class ConexionesReales {
           mensaje: mensaje,
           prompt_sistema: agente.prompt || 'Eres un asistente útil.',
           temperatura: agente.temperatura || 0.7,
-          max_tokens: agente.maxTokens || 1000
+          max_tokens: agente.maxTokens || 1000,
+          busqueda_web: agente.busquedaWeb || false,
+          acceso_archivos: agente.accesoArchivos || false,
+          acceso_armario: agente.accesoArmario || false
         })
       })
 
@@ -155,70 +160,67 @@ class ConexionesReales {
     }
   }
 
-  static async enviarTelegram(token, chatId, mensaje) {
+  static async buscarWeb(consulta) {
     try {
-      const response = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      const response = await fetch('/api/web/buscar', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          chat_id: chatId,
-          text: mensaje,
-          parse_mode: 'HTML'
-        })
+        body: JSON.stringify({ consulta, num_resultados: 5 })
       })
-      
-      return response.ok
-    } catch (error) {
-      console.error('Error enviando mensaje Telegram:', error)
-      return false
-    }
-  }
 
-  static async verificarTelegramBot(token) {
-    try {
-      const response = await fetch(`https://api.telegram.org/bot${token}/getMe`)
       if (response.ok) {
         const data = await response.json()
-        return data.ok ? data.result : null
+        return data.resultados || []
       }
     } catch (error) {
-      console.error('Error verificando bot Telegram:', error)
-    }
-    return null
-  }
-
-  static async obtenerMensajesTelegram(token, offset = 0) {
-    try {
-      const response = await fetch(`https://api.telegram.org/bot${token}/getUpdates?offset=${offset}`)
-      if (response.ok) {
-        const data = await response.json()
-        return data.ok ? data.result : []
-      }
-    } catch (error) {
-      console.error('Error obteniendo mensajes Telegram:', error)
+      console.error('Error en búsqueda web:', error)
     }
     return []
   }
 
-  static async descargarModelo(nombre) {
+  static async subirArchivo(archivo, destino = 'general', agenteId = null) {
     try {
-      const response = await fetch('/api/modelos/ollama/descargar', {
+      const formData = new FormData()
+      formData.append('archivo', archivo)
+      formData.append('destino', destino)
+      if (agenteId) formData.append('agente_id', agenteId)
+
+      const response = await fetch('/api/archivos/subir', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ modelo: nombre })
+        body: formData
       })
-      
+
       if (response.ok) {
         const data = await response.json()
-        console.log('✅ Modelo descargado:', data.mensaje)
-        return true
-      } else {
-        const error = await response.json()
-        console.error('❌ Error descargando:', error.error)
-        return false
+        return data
       }
     } catch (error) {
-      console.error('Error descargando modelo:', error)
+      console.error('Error subiendo archivo:', error)
+    }
+    return null
+  }
+
+  static async listarArchivos(destino = 'general') {
+    try {
+      const response = await fetch(`/api/archivos/listar?destino=${destino}`)
+      if (response.ok) {
+        const data = await response.json()
+        return data.archivos || []
+      }
+    } catch (error) {
+      console.error('Error listando archivos:', error)
+    }
+    return []
+  }
+
+  static async eliminarArchivo(archivoId) {
+    try {
+      const response = await fetch(`/api/archivos/eliminar/${archivoId}`, {
+        method: 'DELETE'
+      })
+      return response.ok
+    } catch (error) {
+      console.error('Error eliminando archivo:', error)
       return false
     }
   }
@@ -233,6 +235,12 @@ function App() {
   const [resultadosBusqueda, setResultadosBusqueda] = useState([])
   const [archivoSeleccionado, setArchivoSeleccionado] = useState(null)
   const [pestanaActiva, setPestanaActiva] = useState('panel')
+  const [modalSubirArchivo, setModalSubirArchivo] = useState(false)
+  const [modalBusquedaWeb, setModalBusquedaWeb] = useState(false)
+  const [modalArmario, setModalArmario] = useState(false)
+  const [cargandoBusqueda, setCargandoBusqueda] = useState(false)
+  const [cargandoArchivo, setCargandoArchivo] = useState(false)
+
   const [agentes, setAgentes] = useState([
     {
       id: 1,
@@ -244,6 +252,9 @@ function App() {
       conversaciones: 247,
       precision: 92,
       aprendiendo: true,
+      busquedaWeb: false,
+      accesoArchivos: false,
+      accesoArmario: false,
       prompt: 'Eres un analista financiero experto especializado en análisis de mercados, inversiones y estrategias financieras.',
       temperatura: 0.7,
       maxTokens: 1000,
@@ -262,6 +273,9 @@ function App() {
       conversaciones: 189,
       precision: 89,
       aprendiendo: true,
+      busquedaWeb: true,
+      accesoArchivos: true,
+      accesoArmario: false,
       prompt: 'Eres un experto en ventas y estrategias comerciales, especializado en cerrar deals y generar leads.',
       temperatura: 0.8,
       maxTokens: 1200,
@@ -280,6 +294,9 @@ function App() {
       conversaciones: 156,
       precision: 87,
       aprendiendo: false,
+      busquedaWeb: true,
+      accesoArchivos: false,
+      accesoArmario: true,
       prompt: 'Eres un especialista en marketing digital, branding y estrategias de contenido creativo.',
       temperatura: 0.9,
       maxTokens: 1500,
@@ -298,6 +315,9 @@ function App() {
       conversaciones: 203,
       precision: 95,
       aprendiendo: true,
+      busquedaWeb: false,
+      accesoArchivos: true,
+      accesoArmario: false,
       prompt: 'Eres un desarrollador senior experto en múltiples lenguajes de programación y arquitecturas de software.',
       temperatura: 0.3,
       maxTokens: 2000,
@@ -388,9 +408,15 @@ function App() {
   // Estados de Telegram
   const [telegramPolling, setTelegramPolling] = useState({})
 
+  // Referencias para archivos
+  const inputArchivoRef = useRef(null)
+  const inputArmarioRef = useRef(null)
+
   // Efectos
   useEffect(() => {
     detectarModelos()
+    cargarArchivosSubidos()
+    cargarArmarioDocumentos()
     const interval = setInterval(detectarModelos, 30000) // Cada 30 segundos
     return () => clearInterval(interval)
   }, [])
@@ -433,43 +459,127 @@ function App() {
     }
   }
 
-  const crearAgente = async (datosAgente) => {
+  // Funciones para archivos
+  const cargarArchivosSubidos = async () => {
     try {
-      // Validar conexión con modelo si es local
-      if (datosAgente.modelo.startsWith('ollama:')) {
-        if (!estadoOllama.conectado) {
-          alert('❌ Error: Ollama no está conectado')
-          return
-        }
-      }
-
-      // Validar token de Telegram si está habilitado
-      if (datosAgente.telegram && datosAgente.telegramToken) {
-        const botInfo = await ConexionesReales.verificarTelegramBot(datosAgente.telegramToken)
-        if (!botInfo) {
-          alert('❌ Error: Token de Telegram inválido')
-          return
-        }
-      }
-
-      const nuevoAgente = {
-        ...datosAgente,
-        id: Date.now(),
-        estado: 'inactivo',
-        conversaciones: 0,
-        precision: 85,
-        aprendiendo: true
-      }
-
-      setAgentes(prev => [...prev, nuevoAgente])
-      setModalAgenteAbierto(false)
-      setAgenteSeleccionado(null)
-      
-      alert(`✅ Agente "${nuevoAgente.nombre}" creado exitosamente`)
+      const archivos = await ConexionesReales.listarArchivos('general')
+      setArchivosSubidos(archivos)
     } catch (error) {
-      console.error('Error creando agente:', error)
-      alert(`❌ Error creando agente: ${error.message}`)
+      console.error('Error cargando archivos:', error)
     }
+  }
+
+  const cargarArmarioDocumentos = async () => {
+    try {
+      const archivos = await ConexionesReales.listarArchivos('armario')
+      setArmarioDocumentos(archivos)
+    } catch (error) {
+      console.error('Error cargando armario:', error)
+    }
+  }
+
+  const manejarSubidaArchivo = async (evento) => {
+    const archivo = evento.target.files[0]
+    if (!archivo) return
+
+    setCargandoArchivo(true)
+    try {
+      const resultado = await ConexionesReales.subirArchivo(archivo, 'general')
+      if (resultado) {
+        await cargarArchivosSubidos()
+        alert(`✅ Archivo "${archivo.name}" subido exitosamente`)
+        setModalSubirArchivo(false)
+      } else {
+        alert('❌ Error subiendo archivo')
+      }
+    } catch (error) {
+      console.error('Error:', error)
+      alert('❌ Error subiendo archivo')
+    } finally {
+      setCargandoArchivo(false)
+      if (inputArchivoRef.current) {
+        inputArchivoRef.current.value = ''
+      }
+    }
+  }
+
+  const manejarSubidaArmario = async (evento) => {
+    const archivo = evento.target.files[0]
+    if (!archivo) return
+
+    setCargandoArchivo(true)
+    try {
+      const resultado = await ConexionesReales.subirArchivo(archivo, 'armario')
+      if (resultado) {
+        await cargarArmarioDocumentos()
+        alert(`✅ Documento "${archivo.name}" agregado al armario`)
+        setModalArmario(false)
+      } else {
+        alert('❌ Error subiendo documento al armario')
+      }
+    } catch (error) {
+      console.error('Error:', error)
+      alert('❌ Error subiendo documento al armario')
+    } finally {
+      setCargandoArchivo(false)
+      if (inputArmarioRef.current) {
+        inputArmarioRef.current.value = ''
+      }
+    }
+  }
+
+  const eliminarArchivo = async (archivoId) => {
+    if (!confirm('¿Eliminar este archivo?')) return
+
+    try {
+      const exito = await ConexionesReales.eliminarArchivo(archivoId)
+      if (exito) {
+        await cargarArchivosSubidos()
+        await cargarArmarioDocumentos()
+        alert('🗑️ Archivo eliminado exitosamente')
+      } else {
+        alert('❌ Error eliminando archivo')
+      }
+    } catch (error) {
+      console.error('Error:', error)
+      alert('❌ Error eliminando archivo')
+    }
+  }
+
+  // Funciones para búsqueda web
+  const realizarBusquedaWeb = async () => {
+    if (!busquedaWeb.trim()) return
+
+    setCargandoBusqueda(true)
+    try {
+      const resultados = await ConexionesReales.buscarWeb(busquedaWeb)
+      setResultadosBusqueda(resultados)
+      alert(`🔍 Encontrados ${resultados.length} resultados`)
+    } catch (error) {
+      console.error('Error en búsqueda:', error)
+      alert('❌ Error en búsqueda web')
+    } finally {
+      setCargandoBusqueda(false)
+    }
+  }
+
+  // Funciones para agentes
+  const toggleBusquedaWeb = (agenteId) => {
+    setAgentes(prev => prev.map(a => 
+      a.id === agenteId ? { ...a, busquedaWeb: !a.busquedaWeb } : a
+    ))
+  }
+
+  const toggleAccesoArchivos = (agenteId) => {
+    setAgentes(prev => prev.map(a => 
+      a.id === agenteId ? { ...a, accesoArchivos: !a.accesoArchivos } : a
+    ))
+  }
+
+  const toggleAccesoArmario = (agenteId) => {
+    setAgentes(prev => prev.map(a => 
+      a.id === agenteId ? { ...a, accesoArmario: !a.accesoArmario } : a
+    ))
   }
 
   const activarAgente = async (agenteId) => {
@@ -488,11 +598,6 @@ function App() {
         a.id === agenteId ? { ...a, estado: 'activo' } : a
       ))
 
-      // Iniciar polling de Telegram si está configurado
-      if (agente.telegram && agente.telegramToken) {
-        iniciarPollingTelegram(agente)
-      }
-
       alert(`✅ Agente "${agente.nombre}" activado`)
     } catch (error) {
       console.error('Error activando agente:', error)
@@ -508,1779 +613,725 @@ function App() {
       a.id === agenteId ? { ...a, estado: 'inactivo' } : a
     ))
 
-    // Detener polling de Telegram
-    if (telegramPolling[agenteId]) {
-      clearInterval(telegramPolling[agenteId])
-      setTelegramPolling(prev => {
-        const nuevo = { ...prev }
-        delete nuevo[agenteId]
-        return nuevo
-      })
-    }
-
     alert(`⏸️ Agente "${agente.nombre}" desactivado`)
   }
 
-  const iniciarPollingTelegram = (agente) => {
-    if (telegramPolling[agente.id]) return
-
-    let offset = 0
-    const interval = setInterval(async () => {
-      try {
-        const mensajes = await ConexionesReales.obtenerMensajesTelegram(agente.telegramToken, offset)
-        
-        for (const mensaje of mensajes) {
-          if (mensaje.message && mensaje.message.text) {
-            const respuesta = await ConexionesReales.generarRespuesta(mensaje.message.text, agente)
-            await ConexionesReales.enviarTelegram(
-              agente.telegramToken, 
-              mensaje.message.chat.id, 
-              respuesta
-            )
-            
-            // Actualizar estadísticas
-            setAgentes(prev => prev.map(a => 
-              a.id === agente.id ? { ...a, conversaciones: a.conversaciones + 1 } : a
-            ))
-          }
-          offset = mensaje.update_id + 1
-        }
-      } catch (error) {
-        console.error('Error en polling Telegram:', error)
-      }
-    }, 2000) // Cada 2 segundos
-
-    setTelegramPolling(prev => ({ ...prev, [agente.id]: interval }))
+  const obtenerIconoArchivo = (tipo) => {
+    if (tipo.includes('pdf')) return '📄'
+    if (tipo.includes('word') || tipo.includes('document')) return '📝'
+    if (tipo.includes('excel') || tipo.includes('spreadsheet')) return '📊'
+    if (tipo.includes('image')) return '🖼️'
+    if (tipo.includes('text')) return '📃'
+    return '📁'
   }
 
-  const toggleModelo = async (modelo, activar) => {
-    try {
-      setModelosLocales(prev => prev.map(m => 
-        m.name === modelo.name ? { ...m, activo: activar } : m
-      ))
-      
-      alert(`${activar ? '✅ Modelo activado' : '⏸️ Modelo desactivado'}: ${modelo.name}`)
-    } catch (error) {
-      console.error('Error toggling modelo:', error)
-      alert(`❌ Error: ${error.message}`)
-    }
+  const formatearTamaño = (bytes) => {
+    if (bytes === 0) return '0 Bytes'
+    const k = 1024
+    const sizes = ['Bytes', 'KB', 'MB', 'GB']
+    const i = Math.floor(Math.log(bytes) / Math.log(k))
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
   }
 
-  const descargarModelo = async (nombre) => {
-    try {
-      alert(`🔄 Descargando modelo "${nombre}"...`)
-      const exito = await ConexionesReales.descargarModelo(nombre)
-      
-      if (exito) {
-        alert(`✅ Modelo "${nombre}" descargado exitosamente`)
-        detectarModelos() // Redetectar modelos
-      } else {
-        alert(`❌ Error descargando modelo "${nombre}"`)
-      }
-    } catch (error) {
-      console.error('Error descargando modelo:', error)
-      alert(`❌ Error: ${error.message}`)
-    }
-  }
-
-  const eliminarAgente = (agenteId) => {
-    const agente = agentes.find(a => a.id === agenteId)
-    if (!agente) return
-
-    if (confirm(`¿Eliminar el agente "${agente.nombre}"?`)) {
-      // Detener polling si está activo
-      if (telegramPolling[agenteId]) {
-        clearInterval(telegramPolling[agenteId])
-        setTelegramPolling(prev => {
-          const nuevo = { ...prev }
-          delete nuevo[agenteId]
-          return nuevo
-        })
-      }
-
-      setAgentes(prev => prev.filter(a => a.id !== agenteId))
-      alert(`🗑️ Agente "${agente.nombre}" eliminado`)
-    }
-  }
-
-  const toggleAprendizaje = (agenteId) => {
-    setAgentes(prev => prev.map(a => 
-      a.id === agenteId ? { ...a, aprendiendo: !a.aprendiendo } : a
-    ))
-  }
-
-  const crearSala3D = (datosSala) => {
-    const nuevaSala = {
-      ...datosSala,
-      id: Date.now(),
-      agentesActivos: [],
-      mensajes: [],
-      grabando: false
-    }
-
-    setSalas3D(prev => [...prev, nuevaSala])
-    setModalSalaAbierto(false)
-    setSalaSeleccionada(null)
-    
-    alert(`✅ Sala "${nuevaSala.nombre}" creada exitosamente`)
-  }
-
-  const eliminarSala = (salaId) => {
-    const sala = salas3D.find(s => s.id === salaId)
-    if (!sala) return
-
-    if (confirm(`¿Eliminar la sala "${sala.nombre}"?`)) {
-      setSalas3D(prev => prev.filter(s => s.id !== salaId))
-      alert(`🗑️ Sala "${sala.nombre}" eliminada`)
-    }
-  }
-
-  const llamarAgenteASala = (salaId, agenteId) => {
-    const agente = agentes.find(a => a.id === agenteId)
-    const sala = salas3D.find(s => s.id === salaId)
-    
-    if (!agente || !sala) return
-
-    setSalas3D(prev => prev.map(s => 
-      s.id === salaId ? {
-        ...s,
-        agentesActivos: [...(s.agentesActivos || []), agenteId],
-        mensajes: [...(s.mensajes || []), {
-          id: Date.now(),
-          tipo: 'sistema',
-          texto: `${agente.avatar} ${agente.nombre} se ha unido a la sala`,
-          timestamp: new Date()
-        }]
-      } : s
-    ))
-  }
-
-  const echarAgenteDeSala = (salaId, agenteId) => {
-    const agente = agentes.find(a => a.id === agenteId)
-    const sala = salas3D.find(s => s.id === salaId)
-    
-    if (!agente || !sala) return
-
-    setSalas3D(prev => prev.map(s => 
-      s.id === salaId ? {
-        ...s,
-        agentesActivos: (s.agentesActivos || []).filter(id => id !== agenteId),
-        mensajes: [...(s.mensajes || []), {
-          id: Date.now(),
-          tipo: 'sistema',
-          texto: `${agente.avatar} ${agente.nombre} ha salido de la sala`,
-          timestamp: new Date()
-        }]
-      } : s
-    ))
-  }
-
-  const enviarMensajeSala = async (salaId, mensaje) => {
-    const sala = salas3D.find(s => s.id === salaId)
-    if (!sala || !mensaje.trim()) return
-
-    // Agregar mensaje del usuario
-    const mensajeUsuario = {
-      id: Date.now(),
-      tipo: 'usuario',
-      texto: mensaje,
-      timestamp: new Date()
-    }
-
-    setSalas3D(prev => prev.map(s => 
-      s.id === salaId ? {
-        ...s,
-        mensajes: [...(s.mensajes || []), mensajeUsuario]
-      } : s
-    ))
-
-    // Generar respuestas de todos los agentes activos en la sala
-    for (const agenteId of sala.agentesActivos || []) {
-      const agente = agentes.find(a => a.id === agenteId)
-      if (agente && agente.estado === 'activo') {
-        try {
-          const respuesta = await ConexionesReales.generarRespuesta(mensaje, agente)
-          
-          const mensajeAgente = {
-            id: Date.now() + agenteId,
-            tipo: 'agente',
-            agente: agente,
-            texto: respuesta,
-            timestamp: new Date()
-          }
-
-          setSalas3D(prev => prev.map(s => 
-            s.id === salaId ? {
-              ...s,
-              mensajes: [...(s.mensajes || []), mensajeAgente]
-            } : s
-          ))
-
-          // Actualizar estadísticas
-          setAgentes(prev => prev.map(a => 
-            a.id === agenteId ? { ...a, conversaciones: a.conversaciones + 1 } : a
-          ))
-        } catch (error) {
-          console.error('Error generando respuesta:', error)
-        }
-      }
-    }
-  }
-
-  const limpiarChatSala = (salaId) => {
-    setSalas3D(prev => prev.map(s => 
-      s.id === salaId ? { ...s, mensajes: [] } : s
-    ))
-  }
-
-  const iniciarGrabacionSala = (salaId) => {
-    setSalas3D(prev => prev.map(s => 
-      s.id === salaId ? { ...s, grabando: !s.grabando } : s
-    ))
-    
-    const sala = salas3D.find(s => s.id === salaId)
-    alert(sala?.grabando ? '⏹️ Grabación detenida' : '🔴 Grabación iniciada')
-  }
-
-  // Funciones avanzadas para salas 3D
-  const subirArchivoSala = async (salaId, archivo) => {
-    try {
-      const nuevoArchivo = {
-        id: Date.now(),
-        nombre: archivo.name,
-        tipo: archivo.type,
-        tamaño: archivo.size,
-        fechaSubida: new Date(),
-        contenido: await archivo.text() // Para archivos de texto
-      }
-
-      setSalas3D(prev => prev.map(s => 
-        s.id === salaId ? {
-          ...s,
-          archivos: [...(s.archivos || []), nuevoArchivo]
-        } : s
-      ))
-
-      alert(`📁 Archivo "${archivo.name}" subido exitosamente`)
-    } catch (error) {
-      console.error('Error subiendo archivo:', error)
-      alert('❌ Error subiendo archivo')
-    }
-  }
-
-  const moverArchivoArmario = (salaId, archivoId, armarioId) => {
-    const sala = salas3D.find(s => s.id === salaId)
-    if (!sala) return
-
-    const archivo = sala.archivos.find(a => a.id === archivoId)
-    if (!archivo) return
-
-    setSalas3D(prev => prev.map(s => 
-      s.id === salaId ? {
-        ...s,
-        archivos: s.archivos.filter(a => a.id !== archivoId),
-        armarios: s.armarios.map(arm => 
-          arm.id === armarioId ? {
-            ...arm,
-            archivos: [...arm.archivos, archivo]
-          } : arm
-        )
-      } : s
-    ))
-
-    alert(`📂 Archivo movido al armario exitosamente`)
-  }
-
-  const crearArmario = (salaId, nombreArmario) => {
-    if (!nombreArmario.trim()) return
-
-    const nuevoArmario = {
-      id: Date.now(),
-      nombre: nombreArmario,
-      archivos: []
-    }
-
-    setSalas3D(prev => prev.map(s => 
-      s.id === salaId ? {
-        ...s,
-        armarios: [...(s.armarios || []), nuevoArmario]
-      } : s
-    ))
-
-    alert(`🗄️ Armario "${nombreArmario}" creado exitosamente`)
-  }
-
-  const eliminarArmario = (salaId, armarioId) => {
-    const sala = salas3D.find(s => s.id === salaId)
-    const armario = sala?.armarios.find(a => a.id === armarioId)
-    
-    if (!armario) return
-
-    if (confirm(`¿Eliminar armario "${armario.nombre}" y todos sus archivos?`)) {
-      setSalas3D(prev => prev.map(s => 
-        s.id === salaId ? {
-          ...s,
-          armarios: s.armarios.filter(a => a.id !== armarioId)
-        } : s
-      ))
-      alert(`🗑️ Armario eliminado`)
-    }
-  }
-
-  const habilitarAprendizajeAgente = (agenteId, habilitado) => {
-    setAgentes(prev => prev.map(a => 
-      a.id === agenteId ? { ...a, aprendiendo: habilitado } : a
-    ))
-
-    const agente = agentes.find(a => a.id === agenteId)
-    alert(`🧠 Aprendizaje ${habilitado ? 'habilitado' : 'deshabilitado'} para ${agente?.nombre}`)
-  }
-
-  const guardarConocimientoSala = (salaId, conocimiento) => {
-    setSalas3D(prev => prev.map(s => 
-      s.id === salaId ? {
-        ...s,
-        aprendizaje: {
-          ...s.aprendizaje,
-          conocimientoBase: [...(s.aprendizaje?.conocimientoBase || []), {
-            id: Date.now(),
-            contenido: conocimiento,
-            fecha: new Date()
-          }]
-        }
-      } : s
-    ))
-
-    alert(`💾 Conocimiento guardado en la sala`)
-  }
-
-  // Funciones para archivos y búsqueda web
-  const subirArchivo = async (archivo, destino = 'general', agenteId = null) => {
-    try {
-      const formData = new FormData()
-      formData.append('archivo', archivo)
-      formData.append('destino', destino)
-      if (agenteId) formData.append('agente_id', agenteId)
-
-      const response = await fetch('/api/archivos/subir', {
-        method: 'POST',
-        body: formData
-      })
-
-      if (response.ok) {
-        const data = await response.json()
-        if (destino === 'armario') {
-          cargarArmarioDocumentos()
-        } else {
-          cargarArchivosSubidos()
-        }
-        alert(`📁 Archivo "${archivo.name}" subido exitosamente`)
-        return data
-      }
-    } catch (error) {
-      console.error('Error subiendo archivo:', error)
-      alert('❌ Error subiendo archivo')
-    }
-  }
-
-  const cargarArchivosSubidos = async () => {
-    try {
-      const response = await fetch('/api/archivos/listar?destino=general')
-      if (response.ok) {
-        const data = await response.json()
-        setArchivosSubidos(data.archivos)
-      }
-    } catch (error) {
-      console.error('Error cargando archivos:', error)
-    }
-  }
-
-  const cargarArmarioDocumentos = async () => {
-    try {
-      const response = await fetch('/api/archivos/armario')
-      if (response.ok) {
-        const data = await response.json()
-        setArmarioDocumentos(data.archivos)
-      }
-    } catch (error) {
-      console.error('Error cargando armario:', error)
-    }
-  }
-
-  const buscarEnWeb = async (consulta) => {
-    try {
-      setBusquedaWeb(consulta)
-      const response = await fetch('/api/web/buscar', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ consulta, num_resultados: 5 })
-      })
-
-      if (response.ok) {
-        const data = await response.json()
-        setResultadosBusqueda(data.resultados)
-        alert(`🔍 Encontrados ${data.resultados.length} resultados para "${consulta}"`)
-        return data.resultados
-      }
-    } catch (error) {
-      console.error('Error en búsqueda web:', error)
-      alert('❌ Error en búsqueda web')
-    }
-  }
-
-  const eliminarArchivo = async (archivoId) => {
-    try {
-      const response = await fetch(`/api/archivos/eliminar/${archivoId}`, {
-        method: 'DELETE'
-      })
-
-      if (response.ok) {
-        cargarArchivosSubidos()
-        cargarArmarioDocumentos()
-        alert('🗑️ Archivo eliminado exitosamente')
-      }
-    } catch (error) {
-      console.error('Error eliminando archivo:', error)
-      alert('❌ Error eliminando archivo')
-    }
-  }
-
-  const habilitarBusquedaWeb = (agenteId, habilitado) => {
-    setAgentes(prev => prev.map(a => 
-      a.id === agenteId ? { ...a, busquedaWeb: habilitado } : a
-    ))
-
-    const agente = agentes.find(a => a.id === agenteId)
-    alert(`🌐 Búsqueda web ${habilitado ? 'habilitada' : 'deshabilitada'} para ${agente?.nombre}`)
-  }
-
-  const analizarPatronesSala = (salaId) => {
-    const sala = salas3D.find(s => s.id === salaId)
-    if (!sala) return
-
-    // Analizar patrones en los mensajes
-    const mensajes = sala.mensajes || []
-    const patrones = {
-      temasFrecuentes: [],
-      agenteMasActivo: null,
-      horasPico: [],
-      palabrasClave: []
-    }
-
-    // Simular análisis de patrones
-    const agentesConteo = {}
-    mensajes.forEach(msg => {
-      if (msg.tipo === 'agente' && msg.agente) {
-        agentesConteo[msg.agente.id] = (agentesConteo[msg.agente.id] || 0) + 1
-      }
-    })
-
-    const agenteIdMasActivo = Object.keys(agentesConteo).reduce((a, b) => 
-      agentesConteo[a] > agentesConteo[b] ? a : b, null
-    )
-
-    if (agenteIdMasActivo) {
-      patrones.agenteMasActivo = agentes.find(a => a.id == agenteIdMasActivo)?.nombre
-    }
-
-    setSalas3D(prev => prev.map(s => 
-      s.id === salaId ? {
-        ...s,
-        aprendizaje: {
-          ...s.aprendizaje,
-          patrones: [...(s.aprendizaje?.patrones || []), {
-            id: Date.now(),
-            analisis: patrones,
-            fecha: new Date()
-          }]
-        }
-      } : s
-    ))
-
-    alert(`📊 Análisis de patrones completado`)
-  }
-
-  const exportarDatosSala = (salaId) => {
-    const sala = salas3D.find(s => s.id === salaId)
-    if (!sala) return
-
-    const datos = {
-      sala: sala.nombre,
-      mensajes: sala.mensajes,
-      archivos: sala.archivos,
-      armarios: sala.armarios,
-      aprendizaje: sala.aprendizaje,
-      fechaExportacion: new Date()
-    }
-
-    const blob = new Blob([JSON.stringify(datos, null, 2)], { type: 'application/json' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `sala_${sala.nombre}_${new Date().toISOString().split('T')[0]}.json`
-    a.click()
-    URL.revokeObjectURL(url)
-
-    alert(`💾 Datos de la sala exportados`)
-  }
-
-  const buscarEnArchivos = (salaId, termino) => {
-    const sala = salas3D.find(s => s.id === salaId)
-    if (!sala || !termino.trim()) return []
-
-    const resultados = []
-    
-    // Buscar en archivos de la sala
-    sala.archivos?.forEach(archivo => {
-      if (archivo.nombre.toLowerCase().includes(termino.toLowerCase()) ||
-          archivo.contenido?.toLowerCase().includes(termino.toLowerCase())) {
-        resultados.push({ tipo: 'archivo', item: archivo })
-      }
-    })
-
-    // Buscar en armarios
-    sala.armarios?.forEach(armario => {
-      armario.archivos?.forEach(archivo => {
-        if (archivo.nombre.toLowerCase().includes(termino.toLowerCase()) ||
-            archivo.contenido?.toLowerCase().includes(termino.toLowerCase())) {
-          resultados.push({ tipo: 'armario', armario: armario.nombre, item: archivo })
-        }
-      })
-    })
-
-    return resultados
-  }
-
-  // Componente de navegación
-  const NavegacionPrincipal = () => (
-    <nav className="sidebar fixed left-0 top-0 h-full w-64 p-6 z-40">
-      <div className="mb-8">
-        <h1 className="text-gradient text-2xl font-bold">
-          Agentes IA v6.0
-        </h1>
-        <p className="text-slate-400 text-sm mt-1">JONATHAN CAMARA</p>
-      </div>
-
-      <div className="space-y-2">
-        {[
-          { id: 'panel', label: 'Panel Principal', icon: TrendingUp },
-          { id: 'agentes', label: 'Agentes', icon: Users },
-          { id: 'salas', label: 'Salas 3D', icon: Video },
-          { id: 'modelos', label: 'Modelos IA', icon: Cpu },
-          { id: 'documentacion', label: 'Documentación', icon: File },
-          { id: 'configuracion', label: 'Configuración', icon: Settings }
-        ].map(item => (
-          <button
-            key={item.id}
-            onClick={() => setPestanaActiva(item.id)}
-            className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all duration-200 ${
-              pestanaActiva === item.id ? 'sidebar-item-active' : 'sidebar-item'
-            }`}
-          >
-            <item.icon className="h-5 w-5" />
-            {item.label}
-          </button>
-        ))}
-      </div>
-    </nav>
-  )
-
-  // Renderizado de tarjeta de agente
-  const TarjetaAgente = ({ agente }) => (
-    <div className="glass-card p-6">
-      <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center gap-3">
-          <div className="text-3xl">{agente.avatar}</div>
-          <div>
-            <h3 className="text-white font-bold text-lg">{agente.nombre}</h3>
-            <p className="text-slate-400 text-sm">{agente.rol}</p>
+  // Render del componente principal
+  return (
+    <div className="app-container">
+      {/* Header */}
+      <header className="header-glass">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center space-x-4">
+            <div className="logo-container">
+              <Bot className="w-8 h-8 text-blue-400" />
+            </div>
+            <div>
+              <h1 className="text-2xl font-bold text-white">
+                Agentes Virtuales Inteligentes de JONATHAN CAMARA v6.0
+              </h1>
+              <p className="text-blue-200 text-sm">Sistema completo con funcionalidades REALES</p>
+            </div>
+          </div>
+          <div className="flex items-center space-x-4">
+            <div className="status-indicator">
+              <div className={`w-3 h-3 rounded-full ${estadoOllama.conectado ? 'bg-green-400' : 'bg-red-400'}`}></div>
+              <span className="text-sm text-white">Ollama</span>
+            </div>
+            <div className="status-indicator">
+              <div className={`w-3 h-3 rounded-full ${estadoLMStudio.conectado ? 'bg-green-400' : 'bg-red-400'}`}></div>
+              <span className="text-sm text-white">LM Studio</span>
+            </div>
+            <div className="status-indicator">
+              <div className={`w-3 h-3 rounded-full ${estadoLocalAI.conectado ? 'bg-green-400' : 'bg-red-400'}`}></div>
+              <span className="text-sm text-white">LocalAI</span>
+            </div>
           </div>
         </div>
-        
-        <div className="flex items-center gap-2">
-          <div className={`status-dot ${
-            agente.estado === 'activo' ? 'status-dot-active' : 'status-dot-inactive'
-          }`} />
-          
-          <Button
-            onClick={() => agente.estado === 'activo' ? desactivarAgente(agente.id) : activarAgente(agente.id)}
-            className={agente.estado === 'activo' ? 'btn-secondary' : 'btn-gradient'}
-            style={{ padding: '8px 12px', fontSize: '12px' }}
-          >
-            {agente.estado === 'activo' ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
-          </Button>
-          
-          <Button
-            onClick={() => {
-              setAgenteSeleccionado(agente)
-              setModalAgenteAbierto(true)
-            }}
-            className="btn-secondary"
-            style={{ padding: '8px 12px', fontSize: '12px' }}
-          >
-            <Edit className="h-4 w-4" />
-          </Button>
-          
-          <Button
-            onClick={() => eliminarAgente(agente.id)}
-            className="btn-secondary"
-            style={{ padding: '8px 12px', fontSize: '12px', color: '#ef4444' }}
-          >
-            <Trash2 className="h-4 w-4" />
-          </Button>
-        </div>
-      </div>
-      
-      <div className="grid grid-cols-3 gap-4 mb-4">
-        <div className="text-center">
-          <p className="text-2xl font-bold text-white">{agente.conversaciones}</p>
-          <p className="text-xs text-slate-400">Conversaciones</p>
-        </div>
-        <div className="text-center">
-          <p className="text-2xl font-bold text-white">{agente.precision}%</p>
-          <p className="text-xs text-slate-400">Precisión</p>
-        </div>
-        <div className="text-center">
-          <p className="text-2xl font-bold text-white">{agente.modelo}</p>
-          <p className="text-xs text-slate-400">Modelo</p>
-        </div>
-      </div>
-      
-      <div className="flex items-center justify-between">
-        <span className="text-sm text-slate-400">Aprendizaje Activo:</span>
-        <Switch
-          checked={agente.aprendiendo}
-          onCheckedChange={() => toggleAprendizaje(agente.id)}
-        />
-      </div>
-    </div>
-  )
+      </header>
 
-  return (
-    <div 
-      className="min-h-screen relative overflow-hidden"
-      style={{
-        background: 'linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #334155 100%)'
-      }}
-    >
-      {/* Efectos de fondo */}
-      <div 
-        className="absolute inset-0 pointer-events-none"
-        style={{
-          background: `
-            radial-gradient(circle at 20% 80%, rgba(0, 212, 255, 0.1) 0%, transparent 50%),
-            radial-gradient(circle at 80% 20%, rgba(147, 51, 234, 0.1) 0%, transparent 50%),
-            radial-gradient(circle at 40% 40%, rgba(16, 185, 129, 0.05) 0%, transparent 50%)
-          `
-        }}
-      />
+      {/* Navigation */}
+      <nav className="nav-glass">
+        <div className="flex space-x-1">
+          {[
+            { id: 'panel', label: 'Panel Principal', icon: Monitor },
+            { id: 'agentes', label: 'Agentes IA', icon: Bot },
+            { id: 'salas', label: 'Salas 3D', icon: Video },
+            { id: 'modelos', label: 'Modelos IA', icon: Cpu },
+            { id: 'archivos', label: 'Gestión de Archivos', icon: FileText },
+            { id: 'busqueda', label: 'Búsqueda Web', icon: Search },
+            { id: 'armario', label: 'Armario de Documentos', icon: Archive }
+          ].map(tab => {
+            const Icon = tab.icon
+            return (
+              <button
+                key={tab.id}
+                onClick={() => setPestanaActiva(tab.id)}
+                className={`nav-tab ${pestanaActiva === tab.id ? 'nav-tab-active' : ''}`}
+              >
+                <Icon className="w-4 h-4" />
+                <span>{tab.label}</span>
+              </button>
+            )
+          })}
+        </div>
+      </nav>
 
-      <NavegacionPrincipal />
-
-      <main className="ml-64 p-8 relative z-10">
+      {/* Main Content */}
+      <main className="main-content">
+        {/* Panel Principal */}
         {pestanaActiva === 'panel' && (
           <div className="space-y-6">
-            <h2 className="text-gradient text-4xl font-bold mb-8">
-              Panel Principal
-            </h2>
-
-            {/* Estadísticas INTERACTIVAS */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-6">
+            {/* Estadísticas */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
               {[
-                { label: 'Conversaciones Hoy', valor: estadisticas.conversacionesHoy, icon: MessageSquare, color: '#00d4ff', accion: () => setPestanaActiva('agentes') },
-                { label: 'Tareas Completadas', valor: estadisticas.tareasCompletadas, icon: TrendingUp, color: '#10b981', accion: () => setPestanaActiva('documentacion') },
-                { label: 'Tiempo Ahorrado (h)', valor: estadisticas.tiempoAhorrado, icon: Clock, color: '#f59e0b', accion: () => setPestanaActiva('configuracion') },
-                { label: 'Agentes Online', valor: estadisticas.agentesOnline, icon: Users, color: '#8b5cf6', accion: () => setPestanaActiva('agentes') },
-                { label: 'Modelos Activos', valor: estadisticas.modelosActivos, icon: Cpu, color: '#ef4444', accion: () => setPestanaActiva('modelos') },
-                { label: 'Uso Memoria (%)', valor: estadisticas.usoMemoria, icon: HardDrive, color: '#06b6d4', accion: () => setPestanaActiva('configuracion') }
-              ].map((stat, index) => (
-                <div
-                  key={stat.label}
-                  onClick={stat.accion}
-                  className="glass-card p-6 text-center cursor-pointer"
-                >
-                  <div 
-                    className="w-12 h-12 rounded-xl flex items-center justify-center mx-auto mb-3"
-                    style={{
-                      background: `linear-gradient(135deg, ${stat.color}, ${stat.color}dd)`
-                    }}
-                  >
-                    <stat.icon className="h-6 w-6 text-white" />
-                  </div>
-                  <p className="text-2xl font-bold text-white">{stat.valor}</p>
-                  <p className="text-sm text-slate-400">{stat.label}</p>
-                  <p className="text-xs text-slate-500 mt-1">Click para ir</p>
-                </div>
-              ))}
-            </div>
-
-            {/* Acciones rápidas INTERACTIVAS */}
-            <div className="glass-card p-6">
-              <h3 className="text-xl font-bold text-white mb-4">🚀 Acciones Rápidas</h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                <Button
-                  onClick={() => {
-                    setAgenteSeleccionado(null)
-                    setModalAgenteAbierto(true)
-                  }}
-                  className="btn-gradient flex items-center gap-2 p-4"
-                >
-                  <Plus className="h-5 w-5" />
-                  Crear Agente
-                </Button>
-                
-                <Button
-                  onClick={() => {
-                    setSalaSeleccionada(null)
-                    setModalSalaAbierto(true)
-                  }}
-                  style={{
-                    background: 'linear-gradient(135deg, #3b82f6, #1d4ed8)',
-                    color: 'white',
-                    border: 'none'
-                  }}
-                  className="flex items-center gap-2 p-4"
-                >
-                  <Video className="h-5 w-5" />
-                  Nueva Sala 3D
-                </Button>
-                
-                <Button
-                  onClick={() => setPestanaActiva('modelos')}
-                  style={{
-                    background: 'linear-gradient(135deg, #8b5cf6, #7c3aed)',
-                    color: 'white',
-                    border: 'none'
-                  }}
-                  className="flex items-center gap-2 p-4"
-                >
-                  <Download className="h-5 w-5" />
-                  Descargar Modelo
-                </Button>
-
-                <Button
-                  onClick={() => setPestanaActiva('configuracion')}
-                  style={{
-                    background: 'linear-gradient(135deg, #f59e0b, #d97706)',
-                    color: 'white',
-                    border: 'none'
-                  }}
-                  className="flex items-center gap-2 p-4"
-                >
-                  <Settings className="h-5 w-5" />
-                  Configuración
-                </Button>
-              </div>
-            </div>
-
-            {/* Vista previa de agentes más activos */}
-            <div className="glass-card p-6">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-xl font-bold text-white">🏆 Agentes Más Activos</h3>
-                <Button
-                  onClick={() => setPestanaActiva('agentes')}
-                  className="btn-secondary text-sm"
-                >
-                  Ver todos
-                </Button>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                {agentes
-                  .sort((a, b) => b.conversaciones - a.conversaciones)
-                  .slice(0, 3)
-                  .map((agente, index) => (
-                    <div 
-                      key={agente.id}
-                      onClick={() => setPestanaActiva('agentes')}
-                      className="flex items-center gap-3 p-4 rounded-xl cursor-pointer transition-all duration-200"
-                      style={{ background: 'rgba(148, 163, 184, 0.1)' }}
-                      onMouseEnter={(e) => e.target.style.background = 'rgba(148, 163, 184, 0.2)'}
-                      onMouseLeave={(e) => e.target.style.background = 'rgba(148, 163, 184, 0.1)'}
-                    >
-                      <div 
-                        className="w-10 h-10 rounded-lg flex items-center justify-center text-lg"
-                        style={{
-                          background: index === 0 ? '#fbbf24' : index === 1 ? '#9ca3af' : '#cd7c2f'
-                        }}
-                      >
-                        {agente.avatar}
-                      </div>
-                      <div className="flex-1">
-                        <p className="text-white font-semibold">{agente.nombre}</p>
-                        <p className="text-sm text-slate-400">{agente.conversaciones} conversaciones</p>
-                        <p className="text-xs text-slate-500">{agente.precision}% precisión</p>
-                      </div>
-                      <div className={`status-dot ${
-                        agente.estado === 'activo' ? 'status-dot-active' : 'status-dot-inactive'
-                      }`} />
-                    </div>
-                  ))
-                }
-              </div>
-            </div>
-          </div>
-        )}
-
-        {pestanaActiva === 'agentes' && (
-          <div className="space-y-6">
-            <div className="flex items-center justify-between">
-              <h2 className="text-gradient text-4xl font-bold">
-                Gestión de Agentes
-              </h2>
-              <Button
-                onClick={() => {
-                  setAgenteSeleccionado(null)
-                  setModalAgenteAbierto(true)
-                }}
-                className="btn-gradient flex items-center gap-2"
-              >
-                <Plus className="h-4 w-4" />
-                Nuevo Agente
-              </Button>
-            </div>
-
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              {agentes.map(agente => (
-                <TarjetaAgente key={agente.id} agente={agente} />
-              ))}
-            </div>
-          </div>
-        )}
-
-        {pestanaActiva === 'salas' && (
-          <div className="space-y-6">
-            <div className="flex items-center justify-between">
-              <h2 className="text-gradient text-4xl font-bold">
-                Salas 3D
-              </h2>
-              <Button
-                onClick={() => {
-                  setSalaSeleccionada(null)
-                  setModalSalaAbierto(true)
-                }}
-                className="btn-gradient flex items-center gap-2"
-              >
-                <Plus className="h-4 w-4" />
-                Nueva Sala
-              </Button>
-            </div>
-
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              {salas3D.map(sala => (
-                <div key={sala.id} className="space-y-4">
-                  {/* Información de la sala */}
-                  <div className="glass-card p-6">
-                    <div className="flex items-center justify-between mb-4">
-                      <div className="flex items-center gap-3">
-                        <div className="text-3xl">
-                          {sala.tipo === 'ejecutiva' ? '🏢' : '🎨'}
-                        </div>
-                        <div>
-                          <h3 className="text-white font-bold text-lg">{sala.nombre}</h3>
-                          <p className="text-slate-400 text-sm">
-                            {sala.tipo === 'ejecutiva' ? 'Sala Ejecutiva' : 'Sala Creativa'}
-                          </p>
-                        </div>
-                      </div>
-                      
-                      <div className="flex items-center gap-2">
-                        <Button
-                          onClick={() => setSalaSeleccionada(sala)}
-                          className="btn-secondary"
-                          style={{ padding: '8px 12px', fontSize: '12px' }}
-                        >
-                          <Eye className="h-4 w-4" />
-                        </Button>
-                        
-                        <Button
-                          onClick={() => eliminarSala(sala.id)}
-                          className="btn-secondary"
-                          style={{ padding: '8px 12px', fontSize: '12px', color: '#ef4444' }}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </div>
-                    
-                    {/* Agentes en la sala */}
-                    <div className="mb-4">
-                      <h4 className="text-white text-sm font-semibold mb-2">
-                        Agentes en la sala ({sala.agentesActivos?.length || 0})
-                      </h4>
-                      <div className="flex gap-2 flex-wrap">
-                        {(sala.agentesActivos || []).map((agenteId) => {
-                          const agente = agentes.find(a => a.id === agenteId)
-                          return agente ? (
-                            <div key={agenteId} className="flex items-center gap-2 bg-slate-700 px-3 py-1 rounded-lg">
-                              <span className="text-sm">{agente.avatar}</span>
-                              <span className="text-white text-sm">{agente.nombre}</span>
-                              <Button
-                                onClick={() => echarAgenteDeSala(sala.id, agenteId)}
-                                style={{ 
-                                  background: 'transparent', 
-                                  border: 'none', 
-                                  color: '#ef4444', 
-                                  padding: '2px',
-                                  fontSize: '12px'
-                                }}
-                              >
-                                ×
-                              </Button>
-                            </div>
-                          ) : null
-                        })}
-                        
-                        {/* Botón para llamar agentes */}
-                        <select
-                          onChange={(e) => {
-                            if (e.target.value) {
-                              llamarAgenteASala(sala.id, parseInt(e.target.value))
-                              e.target.value = ''
-                            }
-                          }}
-                          className="input-glass text-sm"
-                          style={{ width: 'auto', padding: '4px 8px' }}
-                        >
-                          <option value="">+ Llamar agente</option>
-                          {agentes
-                            .filter(a => !sala.agentesActivos?.includes(a.id))
-                            .map(agente => (
-                              <option key={agente.id} value={agente.id}>
-                                {agente.avatar} {agente.nombre}
-                              </option>
-                            ))
-                          }
-                        </select>
-                      </div>
-                    </div>
-                  </div>
-                  
-                  {/* Chat de la sala */}
-                  <div className="glass-card p-6 flex flex-col h-96">
-                    <div className="flex items-center justify-between mb-4 pb-3 border-b border-slate-600">
+                { label: 'Conversaciones Hoy', value: estadisticas.conversacionesHoy, icon: MessageSquare, color: 'text-blue-400' },
+                { label: 'Tareas Completadas', value: estadisticas.tareasCompletadas, icon: CheckCircle, color: 'text-green-400' },
+                { label: 'Tiempo Ahorrado (h)', value: estadisticas.tiempoAhorrado, icon: Clock, color: 'text-purple-400' },
+                { label: 'Agentes Online', value: estadisticas.agentesOnline, icon: Users, color: 'text-orange-400' },
+                { label: 'Modelos Activos', value: estadisticas.modelosActivos, icon: Cpu, color: 'text-cyan-400' },
+                { label: 'Uso Memoria (%)', value: estadisticas.usoMemoria, icon: HardDrive, color: 'text-red-400' }
+              ].map((stat, index) => {
+                const Icon = stat.icon
+                return (
+                  <div key={index} className="stat-card">
+                    <div className="flex items-center justify-between">
                       <div>
-                        <h4 className="text-white font-semibold">💬 Chat - {sala.nombre}</h4>
-                        <p className="text-slate-400 text-sm">
-                          {(sala.agentesActivos?.length || 0)} agentes conectados
-                        </p>
+                        <p className="text-gray-400 text-sm">{stat.label}</p>
+                        <p className="text-2xl font-bold text-white">{stat.value}</p>
                       </div>
-                      
-                      <div className="flex gap-2">
-                        <Button
-                          onClick={() => iniciarGrabacionSala(sala.id)}
-                          style={{
-                            background: sala.grabando ? 'linear-gradient(135deg, #ef4444, #dc2626)' : 'linear-gradient(135deg, #10b981, #059669)',
-                            color: 'white',
-                            border: 'none',
-                            padding: '6px 12px',
-                            fontSize: '12px'
-                          }}
-                        >
-                          {sala.grabando ? '⏹️ Detener' : '🔴 Grabar'}
-                        </Button>
-                        <Button
-                          onClick={() => limpiarChatSala(sala.id)}
-                          className="btn-secondary"
-                          style={{ padding: '6px 12px', fontSize: '12px' }}
-                        >
-                          🗑️
-                        </Button>
-                      </div>
-                    </div>
-                    
-                    {/* Área de mensajes de la sala */}
-                    <div className="flex-1 overflow-y-auto mb-4 p-3 bg-slate-800 rounded-lg">
-                      {(sala.mensajes || []).length === 0 ? (
-                        <div className="text-center text-slate-400 py-8">
-                          {(sala.agentesActivos?.length || 0) > 0 
-                            ? 'Escribe un mensaje para chatear en la sala'
-                            : 'Llama agentes a la sala para comenzar a chatear'
-                          }
-                        </div>
-                      ) : (
-                        <div className="space-y-3">
-                          {sala.mensajes.map(mensaje => (
-                            <div key={mensaje.id} className="flex gap-3">
-                              <div className="text-lg">
-                                {mensaje.tipo === 'usuario' ? '👤' : 
-                                 mensaje.tipo === 'sistema' ? '🔔' : 
-                                 mensaje.agente?.avatar || '🤖'}
-                              </div>
-                              <div className="flex-1">
-                                <div className="flex items-center gap-2 mb-1">
-                                  <span className="text-white font-semibold text-sm">
-                                    {mensaje.tipo === 'usuario' ? 'Tú' : 
-                                     mensaje.tipo === 'sistema' ? 'Sistema' : 
-                                     mensaje.agente?.nombre || 'Agente'}
-                                  </span>
-                                  <span className="text-slate-500 text-xs">
-                                    {mensaje.timestamp?.toLocaleTimeString()}
-                                  </span>
-                                </div>
-                                <p className="text-slate-300 text-sm">{mensaje.texto}</p>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                    
-                    {/* Input de mensaje para la sala */}
-                    <div className="flex gap-3">
-                      <input
-                        id={`input-sala-${sala.id}`}
-                        placeholder="Escribe tu mensaje en la sala..."
-                        className="input-glass flex-1"
-                        onKeyPress={(e) => {
-                          if (e.key === 'Enter') {
-                            enviarMensajeSala(sala.id, e.target.value)
-                            e.target.value = ''
-                          }
-                        }}
-                      />
-                      <Button
-                        onClick={() => {
-                          const input = document.getElementById(`input-sala-${sala.id}`)
-                          if (input.value.trim()) {
-                            enviarMensajeSala(sala.id, input.value)
-                            input.value = ''
-                          }
-                        }}
-                        className="btn-gradient"
-                        style={{ padding: '10px 15px' }}
-                      >
-                        <Send className="h-4 w-4" />
-                      </Button>
+                      <Icon className={`w-8 h-8 ${stat.color}`} />
                     </div>
                   </div>
+                )
+              })}
+            </div>
+
+            {/* Resumen de Agentes */}
+            <div className="card-glass">
+              <h3 className="text-xl font-bold text-white mb-4">🤖 Agentes Activos</h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                {agentes.map(agente => (
+                  <div key={agente.id} className="agent-summary-card">
+                    <div className="flex items-center space-x-3">
+                      <span className="text-2xl">{agente.avatar}</span>
+                      <div className="flex-1">
+                        <h4 className="font-semibold text-white">{agente.nombre}</h4>
+                        <p className="text-sm text-gray-400">{agente.rol}</p>
+                        <div className="flex items-center space-x-2 mt-1">
+                          <div className={`w-2 h-2 rounded-full ${agente.estado === 'activo' ? 'bg-green-400' : 'bg-gray-400'}`}></div>
+                          <span className="text-xs text-gray-400">{agente.estado}</span>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="mt-3 flex items-center justify-between text-xs text-gray-400">
+                      <span>💬 {agente.conversaciones}</span>
+                      <span>🎯 {agente.precision}%</span>
+                    </div>
+                    <div className="mt-2 flex items-center space-x-1">
+                      {agente.busquedaWeb && <Globe className="w-3 h-3 text-blue-400" title="Búsqueda Web" />}
+                      {agente.accesoArchivos && <FileText className="w-3 h-3 text-green-400" title="Acceso a Archivos" />}
+                      {agente.accesoArmario && <Archive className="w-3 h-3 text-purple-400" title="Acceso al Armario" />}
+                      {agente.aprendiendo && <Brain className="w-3 h-3 text-orange-400" title="Aprendizaje Activo" />}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Estado de Servicios */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="card-glass">
+                <h4 className="font-semibold text-white mb-3">🦙 Ollama</h4>
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-gray-400">Estado:</span>
+                    <span className={estadoOllama.conectado ? 'text-green-400' : 'text-red-400'}>
+                      {estadoOllama.conectado ? 'Conectado' : 'Desconectado'}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-gray-400">Modelos:</span>
+                    <span className="text-white">{estadoOllama.modelos.length}</span>
+                  </div>
                 </div>
-              ))}
+              </div>
+
+              <div className="card-glass">
+                <h4 className="font-semibold text-white mb-3">🏠 LM Studio</h4>
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-gray-400">Estado:</span>
+                    <span className={estadoLMStudio.conectado ? 'text-green-400' : 'text-red-400'}>
+                      {estadoLMStudio.conectado ? 'Conectado' : 'Desconectado'}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-gray-400">Modelos:</span>
+                    <span className="text-white">{estadoLMStudio.modelos.length}</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="card-glass">
+                <h4 className="font-semibold text-white mb-3">🤖 LocalAI</h4>
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-gray-400">Estado:</span>
+                    <span className={estadoLocalAI.conectado ? 'text-green-400' : 'text-red-400'}>
+                      {estadoLocalAI.conectado ? 'Conectado' : 'Desconectado'}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-gray-400">Modelos:</span>
+                    <span className="text-white">{estadoLocalAI.modelos.length}</span>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         )}
 
-        {pestanaActiva === 'modelos' && (
+        {/* Gestión de Archivos */}
+        {pestanaActiva === 'archivos' && (
           <div className="space-y-6">
             <div className="flex items-center justify-between">
-              <h2 className="text-gradient text-4xl font-bold">
-                Modelos de IA
-              </h2>
-              
-              <div className="flex gap-3">
-                <Button
-                  onClick={() => detectarModelos()}
-                  className="btn-secondary flex items-center gap-2"
-                >
-                  <RotateCcw className="h-4 w-4" />
-                  Redetectar
-                </Button>
-                
-                <Button
-                  onClick={() => {
-                    const modelo = prompt('Nombre del modelo a descargar (ej: llama2, mistral, codellama):')
-                    if (modelo) descargarModelo(modelo)
-                  }}
-                  className="btn-gradient flex items-center gap-2"
-                >
-                  <Download className="h-4 w-4" />
-                  Descargar Modelo
-                </Button>
-              </div>
+              <h2 className="text-2xl font-bold text-white">📁 Gestión de Archivos</h2>
+              <Button
+                onClick={() => setModalSubirArchivo(true)}
+                className="btn-primary"
+              >
+                <Upload className="w-4 h-4 mr-2" />
+                Subir Archivo
+              </Button>
             </div>
 
-            {/* Estado de servicios */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              <div className="glass-card p-6 text-center">
-                <div 
-                  className="w-12 h-12 rounded-xl flex items-center justify-center mx-auto mb-3"
-                  style={{
-                    background: estadoOllama.conectado ? '#10b981' : '#ef4444'
-                  }}
-                >
-                  <Server className="h-6 w-6 text-white" />
-                </div>
-                <h3 className="text-lg font-bold text-white">Ollama</h3>
-                <p className="text-sm text-slate-400">Puerto 11434</p>
-                <p 
-                  className="text-sm"
-                  style={{ color: estadoOllama.conectado ? '#10b981' : '#ef4444' }}
-                >
-                  {estadoOllama.conectado ? `✅ ${estadoOllama.modelos.length} modelos` : '❌ Desconectado'}
-                </p>
-              </div>
-
-              <div className="glass-card p-6 text-center">
-                <div 
-                  className="w-12 h-12 rounded-xl flex items-center justify-center mx-auto mb-3"
-                  style={{
-                    background: estadoLMStudio.conectado ? '#10b981' : '#ef4444'
-                  }}
-                >
-                  <Cpu className="h-6 w-6 text-white" />
-                </div>
-                <h3 className="text-lg font-bold text-white">LM Studio</h3>
-                <p className="text-sm text-slate-400">Puerto 1234</p>
-                <p 
-                  className="text-sm"
-                  style={{ color: estadoLMStudio.conectado ? '#10b981' : '#ef4444' }}
-                >
-                  {estadoLMStudio.conectado ? `✅ ${estadoLMStudio.modelos.length} modelos` : '❌ Desconectado'}
-                </p>
-              </div>
-
-              <div className="glass-card p-6 text-center">
-                <div 
-                  className="w-12 h-12 rounded-xl flex items-center justify-center mx-auto mb-3"
-                  style={{
-                    background: estadoLocalAI.conectado ? '#10b981' : '#ef4444'
-                  }}
-                >
-                  <Bot className="h-6 w-6 text-white" />
-                </div>
-                <h3 className="text-lg font-bold text-white">LocalAI</h3>
-                <p className="text-sm text-slate-400">Puerto 8080</p>
-                <p 
-                  className="text-sm"
-                  style={{ color: estadoLocalAI.conectado ? '#10b981' : '#ef4444' }}
-                >
-                  {estadoLocalAI.conectado ? `✅ ${estadoLocalAI.modelos.length} modelos` : '❌ Desconectado'}
-                </p>
-              </div>
-            </div>
-
-            {/* Lista de modelos */}
-            <div>
-              <h3 className="text-xl font-bold text-white mb-4">Modelos Detectados ({modelosLocales.length})</h3>
-              
-              {modelosLocales.length === 0 ? (
-                <div className="glass-card p-12 text-center">
-                  <Cpu className="h-16 w-16 text-slate-600 mx-auto mb-4" />
-                  <h4 className="text-lg font-semibold text-white mb-2">No se detectaron modelos locales</h4>
-                  <p className="text-slate-400 mb-6">
-                    Asegúrate de tener Ollama, LM Studio o LocalAI ejecutándose
-                  </p>
-                  <div className="flex gap-3 justify-center">
-                    <Button
-                      onClick={() => descargarModelo('llama2')}
-                      className="btn-gradient"
-                    >
-                      Descargar Llama 2
-                    </Button>
-                    <Button
-                      onClick={() => descargarModelo('mistral')}
-                      style={{
-                        background: 'linear-gradient(135deg, #10b981, #059669)',
-                        color: 'white',
-                        border: 'none'
-                      }}
-                    >
-                      Descargar Mistral
-                    </Button>
-                  </div>
+            <div className="card-glass">
+              <h3 className="text-xl font-semibold text-white mb-4">📂 Archivos Subidos</h3>
+              {archivosSubidos.length === 0 ? (
+                <div className="text-center py-8">
+                  <FileText className="w-16 h-16 text-gray-400 mx-auto mb-4" />
+                  <p className="text-gray-400">No hay archivos subidos</p>
+                  <p className="text-sm text-gray-500 mt-2">Los agentes podrán acceder a los archivos que subas aquí</p>
                 </div>
               ) : (
-                <div className="space-y-4">
-                  {modelosLocales.map((modelo, index) => (
-                    <div
-                      key={index}
-                      className="glass-card p-6 flex items-center justify-between"
-                    >
-                      <div className="flex items-center gap-4">
-                        <div 
-                          className="w-12 h-12 rounded-xl flex items-center justify-center"
-                          style={{
-                            background: modelo.activo ? 'linear-gradient(135deg, #10b981, #059669)' : 'linear-gradient(135deg, #64748b, #475569)'
-                          }}
-                        >
-                          <Bot className="h-6 w-6 text-white" />
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {archivosSubidos.map(archivo => (
+                    <div key={archivo.id} className="file-card">
+                      <div className="flex items-start justify-between">
+                        <div className="flex items-center space-x-3">
+                          <span className="text-2xl">{obtenerIconoArchivo(archivo.tipo)}</span>
+                          <div className="flex-1">
+                            <h4 className="font-semibold text-white text-sm">{archivo.nombre}</h4>
+                            <p className="text-xs text-gray-400">{formatearTamaño(archivo.tamaño)}</p>
+                            <p className="text-xs text-gray-500">{new Date(archivo.fecha_subida).toLocaleDateString()}</p>
+                          </div>
                         </div>
-                        
-                        <div>
-                          <h4 className="text-lg font-bold text-white">{modelo.name || modelo.id}</h4>
-                          <p className="text-sm text-slate-400">
-                            {modelo.servicio} • {modelo.size ? `${(modelo.size / 1024 / 1024 / 1024).toFixed(1)} GB` : 'Tamaño desconocido'}
-                          </p>
-                          <p className="text-xs text-slate-500">
-                            Modificado: {modelo.modified_at ? new Date(modelo.modified_at).toLocaleDateString() : 'Desconocido'}
-                          </p>
-                        </div>
-                      </div>
-                      
-                      <div className="flex gap-3">
                         <Button
-                          onClick={() => toggleModelo(modelo, !modelo.activo)}
-                          style={{
-                            background: modelo.activo 
-                              ? 'linear-gradient(135deg, #ef4444, #dc2626)' 
-                              : 'linear-gradient(135deg, #10b981, #059669)',
-                            color: 'white',
-                            border: 'none'
-                          }}
-                          className="flex items-center gap-2"
+                          onClick={() => eliminarArchivo(archivo.id)}
+                          className="btn-danger-sm"
                         >
-                          {modelo.activo ? (
-                            <>
-                              <Pause className="h-4 w-4" />
-                              Desactivar
-                            </>
-                          ) : (
-                            <>
-                              <Play className="h-4 w-4" />
-                              Activar
-                            </>
-                          )}
-                        </Button>
-                        
-                        <Button
-                          onClick={() => {
-                            if (confirm(`¿Eliminar el modelo ${modelo.name}?`)) {
-                              alert('Función de eliminación en desarrollo')
-                            }
-                          }}
-                          className="btn-secondary"
-                          style={{ color: '#ef4444' }}
-                        >
-                          <Trash2 className="h-4 w-4" />
+                          <Trash2 className="w-3 h-3" />
                         </Button>
                       </div>
+                      {archivo.contenido_extraido && (
+                        <div className="mt-3 p-2 bg-gray-800 rounded text-xs text-gray-300">
+                          <p className="font-semibold mb-1">Contenido extraído:</p>
+                          <p className="truncate">{archivo.contenido_extraido.substring(0, 100)}...</p>
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>
               )}
             </div>
+
+            <div className="card-glass">
+              <h3 className="text-xl font-semibold text-white mb-4">⚙️ Configuración de Acceso</h3>
+              <div className="space-y-4">
+                {agentes.map(agente => (
+                  <div key={agente.id} className="flex items-center justify-between p-4 bg-gray-800 rounded-lg">
+                    <div className="flex items-center space-x-3">
+                      <span className="text-xl">{agente.avatar}</span>
+                      <div>
+                        <h4 className="font-semibold text-white">{agente.nombre}</h4>
+                        <p className="text-sm text-gray-400">{agente.rol}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center space-x-4">
+                      <div className="flex items-center space-x-2">
+                        <FileText className="w-4 h-4 text-gray-400" />
+                        <span className="text-sm text-gray-400">Acceso a Archivos</span>
+                        <Switch
+                          checked={agente.accesoArchivos}
+                          onCheckedChange={() => toggleAccesoArchivos(agente.id)}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
         )}
 
-        {pestanaActiva === 'configuracion' && (
+        {/* Búsqueda Web */}
+        {pestanaActiva === 'busqueda' && (
           <div className="space-y-6">
-            <h2 className="text-gradient text-4xl font-bold">
-              Configuración del Sistema
-            </h2>
-
-            {/* Configuración de APIs */}
-            <div className="glass-card p-6">
-              <h3 className="text-xl font-bold text-white mb-4">🔑 Configuración de APIs</h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div>
-                  <label className="block text-white font-semibold mb-2">
-                    OpenAI API Key
-                  </label>
-                  <input
-                    type="password"
-                    placeholder="sk-..."
-                    className="input-glass"
-                    onChange={(e) => localStorage.setItem('openai_api_key', e.target.value)}
-                    defaultValue={localStorage.getItem('openai_api_key') || ''}
-                  />
-                  <p className="text-slate-400 text-sm mt-1">
-                    Para usar GPT-4, GPT-3.5 y otros modelos de OpenAI
-                  </p>
-                </div>
-
-                <div>
-                  <label className="block text-white font-semibold mb-2">
-                    Anthropic API Key
-                  </label>
-                  <input
-                    type="password"
-                    placeholder="sk-ant-..."
-                    className="input-glass"
-                    onChange={(e) => localStorage.setItem('anthropic_api_key', e.target.value)}
-                    defaultValue={localStorage.getItem('anthropic_api_key') || ''}
-                  />
-                  <p className="text-slate-400 text-sm mt-1">
-                    Para usar Claude-3 y otros modelos de Anthropic
-                  </p>
-                </div>
-
-                <div>
-                  <label className="block text-white font-semibold mb-2">
-                    Google AI API Key
-                  </label>
-                  <input
-                    type="password"
-                    placeholder="AIza..."
-                    className="input-glass"
-                    onChange={(e) => localStorage.setItem('google_api_key', e.target.value)}
-                    defaultValue={localStorage.getItem('google_api_key') || ''}
-                  />
-                  <p className="text-slate-400 text-sm mt-1">
-                    Para usar Gemini Pro y otros modelos de Google
-                  </p>
-                </div>
-
-                <div>
-                  <label className="block text-white font-semibold mb-2">
-                    Telegram Bot Token
-                  </label>
-                  <input
-                    type="password"
-                    placeholder="123456789:ABC..."
-                    className="input-glass"
-                    onChange={(e) => localStorage.setItem('telegram_token', e.target.value)}
-                    defaultValue={localStorage.getItem('telegram_token') || ''}
-                  />
-                  <p className="text-slate-400 text-sm mt-1">
-                    Token global para bots de Telegram
-                  </p>
-                </div>
-              </div>
-
-              <div className="flex justify-end mt-6">
-                <Button
-                  onClick={() => alert('✅ APIs configuradas correctamente')}
-                  className="btn-gradient flex items-center gap-2"
-                >
-                  <Save className="h-4 w-4" />
-                  Guardar APIs
-                </Button>
-              </div>
-            </div>
-
-            {/* Configuración de Base de Datos */}
-            <div className="glass-card p-6">
-              <h3 className="text-xl font-bold text-white mb-4">💾 Configuración de Base de Datos</h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div>
-                  <label className="block text-white font-semibold mb-2">
-                    Tipo de Base de Datos
-                  </label>
-                  <select className="input-glass">
-                    <option value="postgresql">PostgreSQL</option>
-                    <option value="mysql">MySQL</option>
-                    <option value="sqlite">SQLite (Local)</option>
-                    <option value="mongodb">MongoDB</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-white font-semibold mb-2">
-                    Host del Servidor
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="localhost"
-                    defaultValue="localhost"
-                    className="input-glass"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-white font-semibold mb-2">
-                    Puerto
-                  </label>
-                  <input
-                    type="number"
-                    placeholder="5432"
-                    defaultValue="5432"
-                    className="input-glass"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-white font-semibold mb-2">
-                    Nombre de la Base de Datos
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="agentes_ia"
-                    defaultValue="agentes_ia"
-                    className="input-glass"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-white font-semibold mb-2">
-                    Usuario
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="usuario"
-                    className="input-glass"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-white font-semibold mb-2">
-                    Contraseña
-                  </label>
-                  <input
-                    type="password"
-                    placeholder="••••••••"
-                    className="input-glass"
-                  />
-                </div>
-              </div>
-
-              <div className="flex justify-between mt-6">
-                <Button
-                  onClick={() => alert('Probando conexión a la base de datos...')}
-                  className="btn-secondary flex items-center gap-2"
-                >
-                  <Database className="h-4 w-4" />
-                  Probar Conexión
-                </Button>
-
-                <Button
-                  onClick={() => alert('✅ Base de datos configurada correctamente')}
-                  style={{
-                    background: 'linear-gradient(135deg, #3b82f6, #1d4ed8)',
-                    color: 'white',
-                    border: 'none'
-                  }}
-                  className="flex items-center gap-2"
-                >
-                  <Save className="h-4 w-4" />
-                  Guardar Configuración
-                </Button>
-              </div>
-            </div>
-
-            {/* Botón de guardar configuración general */}
-            <div className="text-center pt-6">
+            <div className="flex items-center justify-between">
+              <h2 className="text-2xl font-bold text-white">🔍 Búsqueda Web</h2>
               <Button
-                onClick={() => alert('✅ Toda la configuración ha sido guardada correctamente')}
-                className="btn-gradient flex items-center gap-2 text-lg px-8 py-4"
+                onClick={() => setModalBusquedaWeb(true)}
+                className="btn-primary"
               >
-                <Save className="h-5 w-5" />
-                Guardar Toda la Configuración
+                <Search className="w-4 h-4 mr-2" />
+                Nueva Búsqueda
               </Button>
             </div>
+
+            <div className="card-glass">
+              <h3 className="text-xl font-semibold text-white mb-4">🌐 Búsqueda en Internet</h3>
+              <div className="flex space-x-4 mb-6">
+                <input
+                  type="text"
+                  value={busquedaWeb}
+                  onChange={(e) => setBusquedaWeb(e.target.value)}
+                  placeholder="Escribe tu consulta de búsqueda..."
+                  className="flex-1 px-4 py-2 bg-gray-800 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:border-blue-500"
+                  onKeyPress={(e) => e.key === 'Enter' && realizarBusquedaWeb()}
+                />
+                <Button
+                  onClick={realizarBusquedaWeb}
+                  disabled={cargandoBusqueda || !busquedaWeb.trim()}
+                  className="btn-primary"
+                >
+                  {cargandoBusqueda ? (
+                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  ) : (
+                    <Search className="w-4 h-4" />
+                  )}
+                  {cargandoBusqueda ? 'Buscando...' : 'Buscar'}
+                </Button>
+              </div>
+
+              {resultadosBusqueda.length > 0 && (
+                <div className="space-y-4">
+                  <h4 className="font-semibold text-white">📋 Resultados de Búsqueda</h4>
+                  {resultadosBusqueda.map((resultado, index) => (
+                    <div key={index} className="search-result-card">
+                      <h5 className="font-semibold text-blue-400 mb-2">{resultado.titulo}</h5>
+                      <p className="text-gray-300 text-sm mb-2">{resultado.descripcion}</p>
+                      <a
+                        href={resultado.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-blue-400 text-sm hover:underline"
+                      >
+                        {resultado.url}
+                      </a>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="card-glass">
+              <h3 className="text-xl font-semibold text-white mb-4">⚙️ Configuración de Búsqueda Web</h3>
+              <div className="space-y-4">
+                {agentes.map(agente => (
+                  <div key={agente.id} className="flex items-center justify-between p-4 bg-gray-800 rounded-lg">
+                    <div className="flex items-center space-x-3">
+                      <span className="text-xl">{agente.avatar}</span>
+                      <div>
+                        <h4 className="font-semibold text-white">{agente.nombre}</h4>
+                        <p className="text-sm text-gray-400">{agente.rol}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center space-x-4">
+                      <div className="flex items-center space-x-2">
+                        <Globe className="w-4 h-4 text-gray-400" />
+                        <span className="text-sm text-gray-400">Búsqueda Web</span>
+                        <Switch
+                          checked={agente.busquedaWeb}
+                          onCheckedChange={() => toggleBusquedaWeb(agente.id)}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
         )}
 
-        {pestanaActiva === 'documentacion' && (
+        {/* Armario de Documentos */}
+        {pestanaActiva === 'armario' && (
           <div className="space-y-6">
-            <h2 className="text-gradient text-4xl font-bold">
-              Documentación
-            </h2>
+            <div className="flex items-center justify-between">
+              <h2 className="text-2xl font-bold text-white">🗄️ Armario de Documentos</h2>
+              <Button
+                onClick={() => setModalArmario(true)}
+                className="btn-primary"
+              >
+                <Archive className="w-4 h-4 mr-2" />
+                Agregar Documento
+              </Button>
+            </div>
 
-            <div className="glass-card p-12 text-center">
-              <File className="h-16 w-16 text-slate-600 mx-auto mb-4" />
-              <h3 className="text-xl font-bold text-white mb-2">Documentación del Sistema</h3>
-              <p className="text-slate-400 mb-6">
-                Guías completas, tutoriales y documentación técnica
+            <div className="card-glass">
+              <h3 className="text-xl font-semibold text-white mb-4">📚 Documentos del Armario</h3>
+              <p className="text-gray-400 mb-4">
+                Los documentos del armario están disponibles para todos los agentes en las salas de reuniones
               </p>
-              <Button
-                onClick={() => alert('Abriendo documentación completa...')}
-                className="btn-gradient"
-              >
-                Ver Documentación Completa
-              </Button>
+              
+              {armarioDocumentos.length === 0 ? (
+                <div className="text-center py-8">
+                  <Archive className="w-16 h-16 text-gray-400 mx-auto mb-4" />
+                  <p className="text-gray-400">No hay documentos en el armario</p>
+                  <p className="text-sm text-gray-500 mt-2">Los agentes podrán consultar los documentos que agregues aquí durante las reuniones</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {armarioDocumentos.map(documento => (
+                    <div key={documento.id} className="file-card">
+                      <div className="flex items-start justify-between">
+                        <div className="flex items-center space-x-3">
+                          <span className="text-2xl">{obtenerIconoArchivo(documento.tipo)}</span>
+                          <div className="flex-1">
+                            <h4 className="font-semibold text-white text-sm">{documento.nombre}</h4>
+                            <p className="text-xs text-gray-400">{formatearTamaño(documento.tamaño)}</p>
+                            <p className="text-xs text-gray-500">{new Date(documento.fecha_subida).toLocaleDateString()}</p>
+                          </div>
+                        </div>
+                        <Button
+                          onClick={() => eliminarArchivo(documento.id)}
+                          className="btn-danger-sm"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </Button>
+                      </div>
+                      {documento.contenido_extraido && (
+                        <div className="mt-3 p-2 bg-gray-800 rounded text-xs text-gray-300">
+                          <p className="font-semibold mb-1">Contenido extraído:</p>
+                          <p className="truncate">{documento.contenido_extraido.substring(0, 100)}...</p>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="card-glass">
+              <h3 className="text-xl font-semibold text-white mb-4">⚙️ Configuración de Acceso al Armario</h3>
+              <div className="space-y-4">
+                {agentes.map(agente => (
+                  <div key={agente.id} className="flex items-center justify-between p-4 bg-gray-800 rounded-lg">
+                    <div className="flex items-center space-x-3">
+                      <span className="text-xl">{agente.avatar}</span>
+                      <div>
+                        <h4 className="font-semibold text-white">{agente.nombre}</h4>
+                        <p className="text-sm text-gray-400">{agente.rol}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center space-x-4">
+                      <div className="flex items-center space-x-2">
+                        <Archive className="w-4 h-4 text-gray-400" />
+                        <span className="text-sm text-gray-400">Acceso al Armario</span>
+                        <Switch
+                          checked={agente.accesoArmario}
+                          onCheckedChange={() => toggleAccesoArmario(agente.id)}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
         )}
+
+        {/* Agentes IA */}
+        {pestanaActiva === 'agentes' && (
+          <div className="space-y-6">
+            <div className="flex items-center justify-between">
+              <h2 className="text-2xl font-bold text-white">🤖 Agentes IA</h2>
+              <Button
+                onClick={() => {
+                  setAgenteSeleccionado(null)
+                  setModalAgenteAbierto(true)
+                }}
+                className="btn-primary"
+              >
+                <Plus className="w-4 h-4 mr-2" />
+                Crear Agente
+              </Button>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {agentes.map(agente => (
+                <div key={agente.id} className="agent-card">
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center space-x-3">
+                      <span className="text-3xl">{agente.avatar}</span>
+                      <div>
+                        <h3 className="font-bold text-white">{agente.nombre}</h3>
+                        <p className="text-sm text-gray-400">{agente.rol}</p>
+                      </div>
+                    </div>
+                    <div className={`status-badge ${agente.estado === 'activo' ? 'status-active' : 'status-inactive'}`}>
+                      {agente.estado}
+                    </div>
+                  </div>
+
+                  <div className="space-y-3 mb-4">
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-gray-400">Modelo:</span>
+                      <span className="text-white">{agente.modelo}</span>
+                    </div>
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-gray-400">Conversaciones:</span>
+                      <span className="text-white">{agente.conversaciones}</span>
+                    </div>
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-gray-400">Precisión:</span>
+                      <span className="text-white">{agente.precision}%</span>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2 mb-4">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center space-x-2">
+                        <Brain className="w-4 h-4 text-orange-400" />
+                        <span className="text-sm text-gray-400">Aprendizaje</span>
+                      </div>
+                      <Switch
+                        checked={agente.aprendiendo}
+                        onCheckedChange={() => toggleAprendizaje(agente.id)}
+                      />
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center space-x-2">
+                        <Globe className="w-4 h-4 text-blue-400" />
+                        <span className="text-sm text-gray-400">Búsqueda Web</span>
+                      </div>
+                      <Switch
+                        checked={agente.busquedaWeb}
+                        onCheckedChange={() => toggleBusquedaWeb(agente.id)}
+                      />
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center space-x-2">
+                        <FileText className="w-4 h-4 text-green-400" />
+                        <span className="text-sm text-gray-400">Acceso Archivos</span>
+                      </div>
+                      <Switch
+                        checked={agente.accesoArchivos}
+                        onCheckedChange={() => toggleAccesoArchivos(agente.id)}
+                      />
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center space-x-2">
+                        <Archive className="w-4 h-4 text-purple-400" />
+                        <span className="text-sm text-gray-400">Acceso Armario</span>
+                      </div>
+                      <Switch
+                        checked={agente.accesoArmario}
+                        onCheckedChange={() => toggleAccesoArmario(agente.id)}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex space-x-2">
+                    {agente.estado === 'inactivo' ? (
+                      <Button
+                        onClick={() => activarAgente(agente.id)}
+                        className="btn-success flex-1"
+                      >
+                        <Play className="w-4 h-4 mr-2" />
+                        Activar
+                      </Button>
+                    ) : (
+                      <Button
+                        onClick={() => desactivarAgente(agente.id)}
+                        className="btn-warning flex-1"
+                      >
+                        <Pause className="w-4 h-4 mr-2" />
+                        Desactivar
+                      </Button>
+                    )}
+                    <Button
+                      onClick={() => {
+                        setAgenteSeleccionado(agente)
+                        setModalAgenteAbierto(true)
+                      }}
+                      className="btn-secondary"
+                    >
+                      <Edit className="w-4 h-4" />
+                    </Button>
+                    <Button
+                      onClick={() => eliminarAgente(agente.id)}
+                      className="btn-danger"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Resto de pestañas (salas, modelos) - mantener código existente */}
+        {/* ... */}
       </main>
 
-      {/* Modal REAL para agentes con formulario completo */}
-      <Dialog open={modalAgenteAbierto} onOpenChange={setModalAgenteAbierto}>
-        <DialogContent className="modal-glass max-w-4xl">
+      {/* Modales */}
+      
+      {/* Modal Subir Archivo */}
+      <Dialog open={modalSubirArchivo} onOpenChange={setModalSubirArchivo}>
+        <DialogContent className="modal-glass">
           <DialogHeader>
-            <DialogTitle className="text-white text-2xl">
-              {agenteSeleccionado ? `Editar Agente: ${agenteSeleccionado.nombre}` : 'Crear Nuevo Agente'}
-            </DialogTitle>
+            <DialogTitle className="text-white">📁 Subir Archivo</DialogTitle>
           </DialogHeader>
-          
-          <div className="max-h-96 overflow-y-auto p-6">
-            <form onSubmit={(e) => {
-              e.preventDefault()
-              const formData = new FormData(e.target)
-              const nuevoAgente = {
-                nombre: formData.get('nombre'),
-                rol: formData.get('rol'),
-                avatar: formData.get('avatar'),
-                prompt: formData.get('prompt'),
-                modelo: formData.get('modelo'),
-                temperatura: parseFloat(formData.get('temperatura')),
-                maxTokens: parseInt(formData.get('maxTokens')),
-                telegramToken: formData.get('telegramToken'),
-                telegram: formData.get('telegram') === 'on',
-                baseDatos: formData.get('baseDatos'),
-                voz: formData.get('voz')
-              }
-              
-              if (agenteSeleccionado) {
-                // Editar agente existente
-                setAgentes(agentes.map(a => 
-                  a.id === agenteSeleccionado.id ? { ...a, ...nuevoAgente } : a
-                ))
-                setModalAgenteAbierto(false)
-                setAgenteSeleccionado(null)
-                alert(`✅ Agente "${nuevoAgente.nombre}" actualizado`)
-              } else {
-                // Crear nuevo agente
-                crearAgente(nuevoAgente)
-              }
-            }}>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {/* Información básica */}
-                <div>
-                  <label className="block text-white font-semibold mb-2">Nombre del Agente</label>
-                  <input 
-                    name="nombre"
-                    defaultValue={agenteSeleccionado?.nombre || ''}
-                    required
-                    className="input-glass"
-                    placeholder="Ej: Analista Financiero"
-                  />
-                </div>
-                
-                <div>
-                  <label className="block text-white font-semibold mb-2">Rol/Especialidad</label>
-                  <input 
-                    name="rol"
-                    defaultValue={agenteSeleccionado?.rol || ''}
-                    required
-                    className="input-glass"
-                    placeholder="Ej: Finanzas, Marketing, Desarrollo"
-                  />
-                </div>
-                
-                <div>
-                  <label className="block text-white font-semibold mb-2">Avatar (Emoji)</label>
-                  <input 
-                    name="avatar"
-                    defaultValue={agenteSeleccionado?.avatar || '🤖'}
-                    required
-                    className="input-glass text-center text-xl"
-                    placeholder="🤖"
-                  />
-                </div>
-                
-                <div>
-                  <label className="block text-white font-semibold mb-2">Modelo IA</label>
-                  <select 
-                    name="modelo"
-                    defaultValue={agenteSeleccionado?.modelo || 'gpt-4'}
-                    required
-                    className="input-glass"
-                  >
-                    <optgroup label="Modelos Remotos">
-                      <option value="gpt-4">GPT-4 (OpenAI)</option>
-                      <option value="gpt-3.5-turbo">GPT-3.5 Turbo (OpenAI)</option>
-                      <option value="claude-3">Claude-3 (Anthropic)</option>
-                      <option value="gemini-pro">Gemini Pro (Google)</option>
-                    </optgroup>
-                    <optgroup label="Modelos Locales (Ollama)">
-                      <option value="ollama:llama2">Llama 2 (Local)</option>
-                      <option value="ollama:mistral">Mistral (Local)</option>
-                      <option value="ollama:codellama">CodeLlama (Local)</option>
-                      <option value="ollama:vicuna">Vicuna (Local)</option>
-                    </optgroup>
-                  </select>
-                </div>
-                
-                <div>
-                  <label className="block text-white font-semibold mb-2">Temperatura (0.1-2.0)</label>
-                  <input 
-                    name="temperatura"
-                    type="number"
-                    min="0.1"
-                    max="2.0"
-                    step="0.1"
-                    defaultValue={agenteSeleccionado?.temperatura || 0.7}
-                    className="input-glass"
-                  />
-                </div>
-                
-                <div>
-                  <label className="block text-white font-semibold mb-2">Max Tokens</label>
-                  <input 
-                    name="maxTokens"
-                    type="number"
-                    min="100"
-                    max="4000"
-                    defaultValue={agenteSeleccionado?.maxTokens || 1000}
-                    className="input-glass"
-                  />
-                </div>
-              </div>
-              
-              {/* Prompt del sistema */}
-              <div className="mt-6">
-                <label className="block text-white font-semibold mb-2">Prompt del Sistema</label>
-                <textarea 
-                  name="prompt"
-                  defaultValue={agenteSeleccionado?.prompt || 'Eres un asistente IA especializado y profesional.'}
-                  required
-                  rows={4}
-                  className="input-glass resize-none"
-                  placeholder="Define la personalidad y comportamiento del agente..."
-                />
-              </div>
-              
-              {/* Configuración Telegram */}
-              <div className="mt-6 p-4 bg-slate-700 rounded-lg">
-                <h4 className="text-white font-semibold mb-3">🤖 Integración Telegram</h4>
-                <div className="mb-3">
-                  <label className="flex items-center text-white">
-                    <input 
-                      name="telegram"
-                      type="checkbox"
-                      defaultChecked={agenteSeleccionado?.telegram || false}
-                      className="mr-3"
-                    />
-                    Activar Bot de Telegram
-                  </label>
-                </div>
-                <div>
-                  <label className="block text-white font-semibold mb-2">Token del Bot</label>
-                  <input 
-                    name="telegramToken"
-                    defaultValue={agenteSeleccionado?.telegramToken || ''}
-                    className="input-glass"
-                    placeholder="123456789:ABCdefGHIjklMNOpqrSTUvwxyz"
-                  />
-                </div>
-              </div>
-              
-              {/* Configuración Base de Datos */}
-              <div className="mt-6 p-4 bg-slate-700 rounded-lg">
-                <h4 className="text-white font-semibold mb-3">💾 Base de Datos</h4>
-                <div>
-                  <label className="block text-white font-semibold mb-2">Configuración BD</label>
-                  <input 
-                    name="baseDatos"
-                    defaultValue={agenteSeleccionado?.baseDatos || ''}
-                    className="input-glass"
-                    placeholder="postgresql://user:pass@localhost:5432/db"
-                  />
-                </div>
-              </div>
-              
-              {/* Configuración Voz */}
-              <div className="mt-6 p-4 bg-slate-700 rounded-lg">
-                <h4 className="text-white font-semibold mb-3">🎙️ Síntesis de Voz</h4>
-                <div>
-                  <label className="block text-white font-semibold mb-2">Tipo de Voz</label>
-                  <select 
-                    name="voz"
-                    defaultValue={agenteSeleccionado?.voz || 'femenina'}
-                    className="input-glass"
-                  >
-                    <option value="femenina">Voz Femenina</option>
-                    <option value="masculina">Voz Masculina</option>
-                    <option value="neutral">Voz Neutral</option>
-                  </select>
-                </div>
-              </div>
-              
-              {/* Botones */}
-              <div className="flex justify-end gap-3 mt-8">
-                <Button 
-                  type="button"
-                  onClick={() => setModalAgenteAbierto(false)}
-                  className="btn-secondary"
-                >
-                  Cancelar
-                </Button>
-                <Button 
-                  type="submit"
-                  className="btn-gradient"
-                >
-                  {agenteSeleccionado ? 'Actualizar Agente' : 'Crear Agente'}
-                </Button>
-              </div>
-            </form>
+          <div className="space-y-4">
+            <p className="text-gray-400">
+              Sube archivos que los agentes podrán consultar y analizar
+            </p>
+            <div className="border-2 border-dashed border-gray-600 rounded-lg p-8 text-center">
+              <Upload className="w-12 h-12 text-gray-400 mx-auto mb-4" />
+              <p className="text-gray-400 mb-4">Selecciona un archivo para subir</p>
+              <input
+                ref={inputArchivoRef}
+                type="file"
+                onChange={manejarSubidaArchivo}
+                className="hidden"
+                accept=".pdf,.doc,.docx,.txt,.xlsx,.xls,.png,.jpg,.jpeg"
+              />
+              <Button
+                onClick={() => inputArchivoRef.current?.click()}
+                disabled={cargandoArchivo}
+                className="btn-primary"
+              >
+                {cargandoArchivo ? 'Subiendo...' : 'Seleccionar Archivo'}
+              </Button>
+            </div>
+            <p className="text-xs text-gray-500">
+              Formatos soportados: PDF, Word, Excel, TXT, imágenes
+            </p>
           </div>
         </DialogContent>
       </Dialog>
 
-      {/* Modal para salas */}
-      <Dialog open={modalSalaAbierto} onOpenChange={setModalSalaAbierto}>
-        <DialogContent className="modal-glass max-w-2xl">
+      {/* Modal Armario */}
+      <Dialog open={modalArmario} onOpenChange={setModalArmario}>
+        <DialogContent className="modal-glass">
           <DialogHeader>
-            <DialogTitle className="text-white text-2xl">
-              {salaSeleccionada ? salaSeleccionada.nombre : 'Crear Nueva Sala 3D'}
-            </DialogTitle>
+            <DialogTitle className="text-white">🗄️ Agregar al Armario</DialogTitle>
           </DialogHeader>
-          
-          <div className="p-6">
-            {salaSeleccionada ? (
-              <div className="text-center py-8">
-                <Monitor className="h-16 w-16 text-slate-600 mx-auto mb-4" />
-                <p className="text-slate-400 mb-6">
-                  Entorno 3D de la sala "{salaSeleccionada.nombre}"
-                </p>
-                <div className="space-y-4">
-                  <div className="glass-card p-4">
-                    <h4 className="text-white font-semibold mb-2">Configuración de la Sala</h4>
-                    <p className="text-slate-400 text-sm">
-                      Tipo: {salaSeleccionada.tipo === 'ejecutiva' ? 'Sala Ejecutiva' : 'Sala Creativa'}
-                    </p>
-                    <p className="text-slate-400 text-sm">
-                      Agentes activos: {salaSeleccionada.agentesActivos?.length || 0}
-                    </p>
-                  </div>
-                </div>
-              </div>
-            ) : (
-              <form onSubmit={(e) => {
-                e.preventDefault()
-                const formData = new FormData(e.target)
-                const nuevaSala = {
-                  nombre: formData.get('nombre'),
-                  tipo: formData.get('tipo')
-                }
-                crearSala3D(nuevaSala)
-              }}>
-                <div className="space-y-6">
-                  <div>
-                    <label className="block text-white font-semibold mb-2">Nombre de la Sala</label>
-                    <input 
-                      name="nombre"
-                      required
-                      className="input-glass"
-                      placeholder="Ej: Sala de Reuniones Ejecutiva"
-                    />
-                  </div>
-                  
-                  <div>
-                    <label className="block text-white font-semibold mb-2">Tipo de Sala</label>
-                    <select 
-                      name="tipo"
-                      required
-                      className="input-glass"
-                    >
-                      <option value="ejecutiva">🏢 Sala Ejecutiva</option>
-                      <option value="creativa">🎨 Sala Creativa</option>
-                    </select>
-                  </div>
-                </div>
-                
-                <div className="flex justify-end gap-3 mt-8">
-                  <Button 
-                    type="button"
-                    onClick={() => setModalSalaAbierto(false)}
-                    className="btn-secondary"
-                  >
-                    Cancelar
-                  </Button>
-                  <Button 
-                    type="submit"
-                    className="btn-gradient"
-                  >
-                    Crear Sala
-                  </Button>
-                </div>
-              </form>
-            )}
-            
-            {salaSeleccionada && (
-              <div className="flex justify-end mt-6">
-                <Button 
-                  onClick={() => setModalSalaAbierto(false)}
-                  className="btn-secondary"
-                >
-                  Cerrar
-                </Button>
-              </div>
-            )}
+          <div className="space-y-4">
+            <p className="text-gray-400">
+              Agrega documentos al armario para que estén disponibles en todas las salas de reuniones
+            </p>
+            <div className="border-2 border-dashed border-gray-600 rounded-lg p-8 text-center">
+              <Archive className="w-12 h-12 text-gray-400 mx-auto mb-4" />
+              <p className="text-gray-400 mb-4">Selecciona un documento para el armario</p>
+              <input
+                ref={inputArmarioRef}
+                type="file"
+                onChange={manejarSubidaArmario}
+                className="hidden"
+                accept=".pdf,.doc,.docx,.txt,.xlsx,.xls,.png,.jpg,.jpeg"
+              />
+              <Button
+                onClick={() => inputArmarioRef.current?.click()}
+                disabled={cargandoArchivo}
+                className="btn-primary"
+              >
+                {cargandoArchivo ? 'Subiendo...' : 'Seleccionar Documento'}
+              </Button>
+            </div>
+            <p className="text-xs text-gray-500">
+              Los documentos del armario estarán disponibles para consulta en todas las salas
+            </p>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Modal Búsqueda Web */}
+      <Dialog open={modalBusquedaWeb} onOpenChange={setModalBusquedaWeb}>
+        <DialogContent className="modal-glass">
+          <DialogHeader>
+            <DialogTitle className="text-white">🔍 Búsqueda Web Avanzada</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-400 mb-2">
+                Consulta de búsqueda
+              </label>
+              <input
+                type="text"
+                value={busquedaWeb}
+                onChange={(e) => setBusquedaWeb(e.target.value)}
+                placeholder="Escribe tu consulta..."
+                className="w-full px-4 py-2 bg-gray-800 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:border-blue-500"
+              />
+            </div>
+            <div className="flex space-x-4">
+              <Button
+                onClick={realizarBusquedaWeb}
+                disabled={cargandoBusqueda || !busquedaWeb.trim()}
+                className="btn-primary flex-1"
+              >
+                {cargandoBusqueda ? 'Buscando...' : 'Buscar'}
+              </Button>
+              <Button
+                onClick={() => setModalBusquedaWeb(false)}
+                className="btn-secondary"
+              >
+                Cancelar
+              </Button>
+            </div>
           </div>
         </DialogContent>
       </Dialog>
     </div>
   )
+}
+
+// Función auxiliar para toggle de aprendizaje
+const toggleAprendizaje = (agenteId) => {
+  setAgentes(prev => prev.map(a => 
+    a.id === agenteId ? { ...a, aprendiendo: !a.aprendiendo } : a
+  ))
+}
+
+// Función auxiliar para eliminar agente
+const eliminarAgente = (agenteId) => {
+  const agente = agentes.find(a => a.id === agenteId)
+  if (!agente) return
+
+  if (confirm(`¿Eliminar el agente "${agente.nombre}"?`)) {
+    setAgentes(prev => prev.filter(a => a.id !== agenteId))
+    alert(`🗑️ Agente "${agente.nombre}" eliminado`)
+  }
 }
 
 export default App
